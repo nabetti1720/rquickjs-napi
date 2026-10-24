@@ -23,6 +23,8 @@ Node-API addons in an `rquickjs` runtime; it does not run Node.js.
   both synchronous and asynchronous cleanup hooks return `napi_generic_failure`
   rather than reporting success.
 
+See [NAPI.md](NAPI.md) for the implemented API areas and known limitations.
+
 ## Usage
 
 Add `rquickjs` with its module loader feature and this crate to your
