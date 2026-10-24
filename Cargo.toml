@@ -1,0 +1,19 @@
+[package]
+name = "rquickjs-napi"
+description = "Node-API (N-API) support and native addon loading for rquickjs"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/nabetti1720/rquickjs-napi"
+exclude = ["tests/fixtures/napi/addon.node"]
+
+[dependencies]
+rquickjs = { version = "0.14", features = ["futures","loader"], default-features = false }
+tokio = { version = "1", features = ["sync"], default-features = false }
+tracing = { version = "0.1", default-features = false }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "time"], default-features = false }
