@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  check:
-    name: Check (${{ matrix.os }})
+  ci:
+    name: CI (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -28,5 +28,11 @@ jobs:
           components: clippy
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
-      - name: Run checks and tests
-        run: make ci
+      - name: Lint and format check
+        run: make lint
+      - name: Build all targets
+        run: make build
+      - name: Run unit tests
+        run: make test
+      - name: Run N-API integration test
+        run: make test-napi

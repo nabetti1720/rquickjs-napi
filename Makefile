@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
+# Tools and build configuration
 CARGO ?= cargo
 CC ?= cc
 TARGET ?=
@@ -9,55 +10,61 @@ NAPI_FIXTURE_ADDON := $(NAPI_FIXTURE_DIR)/addon.node
 UNAME_S := $(shell uname -s)
 
 ifeq ($(UNAME_S),Darwin)
-SAMPLE_LDFLAGS := -undefined dynamic_lookup
+NAPI_FIXTURE_LDFLAGS := -undefined dynamic_lookup
 else
-SAMPLE_LDFLAGS :=
+NAPI_FIXTURE_LDFLAGS :=
 endif
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build release check test test-napi fix fixture-build ci clean
+.PHONY: help build release check lint test test-napi fix ci clean
 
 help:
 	@printf '%s\n' \
-		'Available targets:' \
-		'  build        Build the crate (optional: TARGET=<triple>)' \
-		'  release      Build the crate in release mode (optional: TARGET=<triple>)' \
-		'  check        Run Clippy and check compilation' \
-		'  test         Run all Rust tests' \
-		'  test-napi    Load and test the N-API sample in rquickjs' \
-		'  fix          Apply Cargo fixes, Clippy fixes, and formatting' \
-		'  fixture-build Build the N-API test addon' \
-		'  ci            Run checks, Rust tests, and N-API integration test' \
-		'  clean         Remove Cargo and test addon build artifacts'
+		'Rust:' \
+		'  lint       Check formatting and run Clippy' \
+		'  build      Build all targets (optional: TARGET=<triple>)' \
+		'  check      Check all targets (optional: TARGET=<triple>)' \
+		'  test       Run Rust unit tests' \
+		'  release    Build all targets in release mode (optional: TARGET=<triple>)' \
+		'  fix        Apply Cargo fixes, Clippy fixes, and formatting' \
+		'Integration:' \
+		'  test-napi  Build the C fixture and test it through NapiLoader' \
+		'  ci         Run lint, build, unit, and integration tests' \
+		'Maintenance:' \
+		'  clean      Remove Cargo and test addon build artifacts'
+
+# Rust checks and builds
+lint:
+	$(CARGO) fmt --all -- --check
+	$(CARGO) clippy --all-targets --all-features -- -D warnings
 
 build:
-	$(CARGO) build $(CARGO_TARGET_ARG)
+	$(CARGO) build --all-targets $(CARGO_TARGET_ARG)
 
 release:
-	$(CARGO) build --release $(CARGO_TARGET_ARG)
+	$(CARGO) build --release --all-targets $(CARGO_TARGET_ARG)
 
 check:
-	$(CARGO) clippy --all-targets --all-features -- -D warnings
 	$(CARGO) check --all-targets $(CARGO_TARGET_ARG)
 
 test:
-	$(CARGO) test --all-targets
+	$(CARGO) test --lib
 
 fix:
 	$(CARGO) fix --allow-dirty --all-targets
 	$(CARGO) clippy --fix --allow-dirty --all-targets --all-features
 	$(CARGO) fmt --all
 
+# N-API integration test
 $(NAPI_FIXTURE_ADDON): $(NAPI_FIXTURE_DIR)/addon.c
-	$(CC) -O2 -shared -fPIC $(SAMPLE_LDFLAGS) -pthread -o $@ $<
+	$(CC) -O2 -shared -fPIC $(NAPI_FIXTURE_LDFLAGS) -pthread -o $@ $<
 
-fixture-build: $(NAPI_FIXTURE_ADDON)
-
-test-napi: fixture-build
+test-napi: $(NAPI_FIXTURE_ADDON)
 	$(CARGO) test --test napi_loader -- --ignored --nocapture
 
-ci: check test test-napi
+# Aggregate and cleanup
+ci: lint build test test-napi
 
 clean:
 	$(CARGO) clean

@@ -81,13 +81,15 @@ exports.
 ## Development
 
 The Makefile provides common build and validation targets. Run `make help` to
-list them. `make check` runs Clippy and checks compilation; `make fix` applies
-Cargo and Clippy suggestions and formats Rust sources. For example, `make ci`
-runs checks and Rust tests, builds the sample N-API addon, and loads it through
-`NapiLoader` in `rquickjs`. Run `make test-napi` to run just that integration
-test; it builds the C addon fixture under `tests/fixtures/napi` and requires a C
-compiler. JavaScript test scripts are kept in `tests/`. To cross-compile, pass
-an installed Rust target, for example `make build TARGET=aarch64-unknown-linux-gnu`.
+list them. `make lint` checks formatting and runs Clippy; `make build` builds
+all targets; and `make test` runs Rust unit tests. `make ci` runs these checks
+and the N-API integration test. Run `make test-napi` to run just that
+integration test; it builds the C addon fixture under `tests/fixtures/napi` and
+requires a C compiler. `make check` checks all targets without producing
+artifacts, while `make fix` applies Cargo and Clippy suggestions and formats
+Rust sources. JavaScript test scripts are kept in `tests/`. To cross-compile,
+pass an installed Rust target, for example
+`make build TARGET=aarch64-unknown-linux-gnu`.
 
 ## License
 
