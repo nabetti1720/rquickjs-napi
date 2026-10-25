@@ -23,8 +23,7 @@ pub(super) unsafe fn buf_info(env: napi_env, value: napi_value) -> Status<(usize
     let view = value.as_object().ok_or(NAPI_INVALID_ARG)?;
     let byte_length = js(env, view.get("byteLength"))?;
     let byte_offset = js(env, view.get("byteOffset"))?;
-    let buffer: V = js(env, view.get("buffer"))?;
-    view_ptr(buffer.clone(), byte_offset, byte_length)?;
+    let buffer = js(env, view.get("buffer"))?;
     Ok((byte_length, byte_offset, buffer))
 }
 
