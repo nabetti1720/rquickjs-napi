@@ -33,7 +33,7 @@ application:
 ```toml
 [dependencies]
 rquickjs = { version = "0.14", features = ["loader"] }
-rquickjs-napi = { git = "https://github.com/nabetti1720/rquickjs-napi" }
+rquickjs-napi = { version = "0.0.1" }
 ```
 
 Register `NapiLoader` before general-purpose loaders, and add the `.node`
