@@ -4,9 +4,13 @@ use super::*;
 
 use rquickjs::{ArrayBuffer, Function, Object};
 
-pub(super) unsafe fn view_ptr(buffer: V, offset: usize) -> Status<*mut c_void> {
+pub(super) unsafe fn view_ptr(buffer: V, offset: usize, byte_length: usize) -> Status<*mut c_void> {
     let ab = ArrayBuffer::from_value(buffer).ok_or(NAPI_INVALID_ARG)?;
     let raw = ab.as_raw().ok_or(NAPI_INVALID_ARG)?;
+    let end = offset.checked_add(byte_length).ok_or(NAPI_INVALID_ARG)?;
+    if end > raw.len() {
+        return Err(NAPI_INVALID_ARG);
+    }
     Ok((raw.as_ptr() as *mut u8).add(offset) as *mut c_void)
 }
 
@@ -19,7 +23,8 @@ pub(super) unsafe fn buf_info(env: napi_env, value: napi_value) -> Status<(usize
     let view = value.as_object().ok_or(NAPI_INVALID_ARG)?;
     let byte_length = js(env, view.get("byteLength"))?;
     let byte_offset = js(env, view.get("byteOffset"))?;
-    let buffer = js(env, view.get("buffer"))?;
+    let buffer: V = js(env, view.get("buffer"))?;
+    view_ptr(buffer.clone(), byte_offset, byte_length)?;
     Ok((byte_length, byte_offset, buffer))
 }
 

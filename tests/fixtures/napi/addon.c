@@ -193,6 +193,18 @@ static napi_value buffer_info_status(napi_env env, napi_callback_info info) {
   return result;
 }
 
+static napi_value dataview_info_status(napi_env env, napi_callback_info info) {
+  size_t argc = 1, length = 0, offset = 0;
+  napi_value argv[1], arraybuffer, result;
+  void *data = NULL;
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  napi_status status = argc > 0
+    ? napi_get_dataview_info(env, argv[0], &length, &data, &arraybuffer, &offset)
+    : 1;
+  napi_create_double(env, (double)status, &result);
+  return result;
+}
+
 static napi_value cleanup_hook_statuses(napi_env env, napi_callback_info info) {
   (void)info;
   napi_status statuses[4];
@@ -578,6 +590,8 @@ napi_value napi_register_module_v1(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "createBuffer", fn);
   napi_create_function(env, "bufferInfoStatus", (size_t)-1, buffer_info_status, NULL, &fn);
   napi_set_named_property(env, exports, "bufferInfoStatus", fn);
+  napi_create_function(env, "dataviewInfoStatus", (size_t)-1, dataview_info_status, NULL, &fn);
+  napi_set_named_property(env, exports, "dataviewInfoStatus", fn);
   napi_create_function(env, "cleanupHookStatuses", (size_t)-1, cleanup_hook_statuses, NULL, &fn);
   napi_set_named_property(env, exports, "cleanupHookStatuses", fn);
   napi_create_function(env, "bigints", (size_t)-1, bigints, NULL, &fn);

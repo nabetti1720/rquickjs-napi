@@ -40,7 +40,7 @@ pub unsafe extern "C" fn napi_get_typedarray_info(
     byte_offset: *mut usize,
 ) -> napi_status {
     run(env, || {
-        let (k, len, offset, _, buffer) = view_info(env, typedarray)?;
+        let (k, len, offset, byte_length, buffer) = view_info(env, typedarray)?;
         if !kind.is_null() {
             *kind = k as c_int;
         }
@@ -48,7 +48,7 @@ pub unsafe extern "C" fn napi_get_typedarray_info(
             *length = len;
         }
         if !data.is_null() {
-            *data = view_ptr(buffer.clone(), offset)?;
+            *data = view_ptr(buffer.clone(), offset, byte_length)?;
         }
         if !arraybuffer.is_null() {
             *arraybuffer = push(env, buffer);
@@ -142,7 +142,7 @@ pub unsafe extern "C" fn napi_get_dataview_info(
             *byte_length = len;
         }
         if !data.is_null() {
-            *data = view_ptr(buffer.clone(), offset)?;
+            *data = view_ptr(buffer.clone(), offset, len)?;
         }
         if !arraybuffer.is_null() {
             *arraybuffer = push(env, buffer);
