@@ -24,6 +24,14 @@ assert(!addon.isBuffer(new DataView(new ArrayBuffer(4))), "DataView is not a Buf
 assert(addon.bufferInfoStatus(buffer) === 0, "buffer info accepts a Buffer");
 assert(addon.bufferInfoStatus(new Uint8Array(4)) !== 0, "buffer info rejects an unmarked view");
 assert(addon.bufferInfoStatus(new DataView(new ArrayBuffer(4))) !== 0, "buffer info rejects DataView");
+const validDataView = new DataView(new ArrayBuffer(4));
+assert(addon.dataviewInfoStatus(validDataView) === 0, "DataView info accepts an in-bounds view");
+const invalidDataView = new DataView(new ArrayBuffer(4));
+Object.defineProperty(invalidDataView, "byteOffset", { value: Number.MAX_SAFE_INTEGER });
+assert(
+  addon.dataviewInfoStatus(invalidDataView) === 1,
+  "DataView info rejects an out-of-bounds byte offset",
+);
 
 assert(
   addon.cleanupHookStatuses().every((status) => status !== 0),

@@ -144,7 +144,7 @@ pub unsafe extern "C" fn napi_get_buffer_info(
         }
         let (byte_length, offset, buffer) = buf_info(env, value)?;
         if !data.is_null() {
-            *data = view_ptr(buffer, offset)?;
+            *data = view_ptr(buffer, offset, byte_length)?;
         }
         if !length.is_null() {
             *length = byte_length;
