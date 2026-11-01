@@ -7,14 +7,18 @@ use super::*;
 
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
-    Mutex, MutexGuard,
+    Condvar, Mutex, MutexGuard,
 };
+use std::thread::{self, ThreadId};
 
 use tokio::sync::mpsc::{
     error::TryRecvError, unbounded_channel, UnboundedReceiver, UnboundedSender,
 };
 
 const NAPI_CLOSING: napi_status = 16;
+const NAPI_QUEUE_FULL: napi_status = 15;
+const NAPI_TSFN_NONBLOCKING: c_int = 0;
+const NAPI_TSFN_BLOCKING: c_int = 1;
 
 type napi_threadsafe_function_call_js =
     unsafe extern "C" fn(napi_env, napi_value, *mut c_void, *mut c_void);
@@ -34,9 +38,71 @@ pub struct Tsfn {
     finalize_data: usize,
     tx: UnboundedSender<Msg>,
     parked: Mutex<Option<UnboundedReceiver<Msg>>>,
+    max_queue_size: usize,
+    queue_size: Mutex<usize>,
+    queue_space: Condvar,
+    js_thread: ThreadId,
     want_ref: AtomicBool,
     threads: AtomicUsize,
     closing: AtomicBool,
+}
+
+fn lock_queue_size(t: &Tsfn) -> MutexGuard<'_, usize> {
+    match t.queue_size.lock() {
+        Ok(size) => size,
+        Err(poisoned) => {
+            eprintln!("Recovering poisoned threadsafe function queue size");
+            poisoned.into_inner()
+        }
+    }
+}
+
+fn enqueue_data(t: &Tsfn, data: usize, blocking: bool) -> napi_status {
+    let mut size = lock_queue_size(t);
+    loop {
+        if t.closing.load(Ordering::SeqCst) {
+            return NAPI_CLOSING;
+        }
+        if t.max_queue_size == 0 || *size < t.max_queue_size {
+            break;
+        }
+        let unref_parked = !t.want_ref.load(Ordering::SeqCst) && lock_parked(t).is_some();
+        if !blocking || thread::current().id() == t.js_thread || unref_parked {
+            return NAPI_QUEUE_FULL;
+        }
+        size = match t.queue_space.wait(size) {
+            Ok(size) => size,
+            Err(poisoned) => {
+                eprintln!("Recovering poisoned threadsafe function queue size");
+                poisoned.into_inner()
+            }
+        };
+    }
+    if t.max_queue_size > 0 {
+        *size += 1;
+    }
+    match t.tx.send(Msg::Data(data)) {
+        Ok(()) => NAPI_OK,
+        Err(_) => {
+            if t.max_queue_size > 0 {
+                *size = size.saturating_sub(1);
+                t.queue_space.notify_one();
+            }
+            NAPI_CLOSING
+        }
+    }
+}
+
+fn release_queue_slot(t: &Tsfn) {
+    let mut size = lock_queue_size(t);
+    *size = size.saturating_sub(1);
+    t.queue_space.notify_one();
+}
+
+fn release_slot_for_message(t: &Tsfn, message: &Msg) {
+    if matches!(message, Msg::Data(_)) && t.max_queue_size > 0 {
+        release_queue_slot(t);
+    }
 }
 
 fn lock_parked(t: &Tsfn) -> MutexGuard<'_, Option<UnboundedReceiver<Msg>>> {
@@ -57,12 +123,18 @@ async fn run_loop(t: &'static Tsfn, mut rx: UnboundedReceiver<Msg>) {
     loop {
         let msg = if t.want_ref.load(Ordering::SeqCst) {
             match rx.recv().await {
-                Some(m) => m,
+                Some(m) => {
+                    release_slot_for_message(t, &m);
+                    m
+                }
                 None => break,
             }
         } else {
             match rx.try_recv() {
-                Ok(m) => m,
+                Ok(m) => {
+                    release_slot_for_message(t, &m);
+                    m
+                }
                 Err(TryRecvError::Disconnected) => break,
                 Err(TryRecvError::Empty) => {
                     let resume = {
@@ -135,7 +207,7 @@ pub unsafe extern "C" fn napi_create_threadsafe_function(
     func: napi_value,
     _async_resource: napi_value,
     _async_resource_name: napi_value,
-    _max_queue_size: usize,
+    max_queue_size: usize,
     initial_thread_count: usize,
     thread_finalize_data: *mut c_void,
     thread_finalize_cb: Option<napi_finalize>,
@@ -144,6 +216,9 @@ pub unsafe extern "C" fn napi_create_threadsafe_function(
     result: *mut *mut Tsfn,
 ) -> napi_status {
     run_js(env, || {
+        if result.is_null() {
+            return Err(NAPI_INVALID_ARG);
+        }
         if initial_thread_count == 0 || (func.is_null() && call_js_cb.is_none()) {
             return Err(NAPI_INVALID_ARG);
         }
@@ -165,6 +240,10 @@ pub unsafe extern "C" fn napi_create_threadsafe_function(
             finalize_data: thread_finalize_data as usize,
             tx,
             parked: Mutex::new(None),
+            max_queue_size,
+            queue_size: Mutex::new(0),
+            queue_space: Condvar::new(),
+            js_thread: thread::current().id(),
             want_ref: AtomicBool::new(true),
             threads: AtomicUsize::new(initial_thread_count),
             closing: AtomicBool::new(false),
@@ -188,23 +267,19 @@ pub unsafe extern "C" fn napi_get_threadsafe_function_context(
     }
 }
 
-/// `is_blocking` is ignored: the queue is unbounded.
 #[no_mangle]
 pub unsafe extern "C" fn napi_call_threadsafe_function(
     func: *mut Tsfn,
     data: *mut c_void,
-    _is_blocking: c_int,
+    is_blocking: c_int,
 ) -> napi_status {
     let Some(t) = func.as_ref() else {
         return NAPI_INVALID_ARG;
     };
-    if t.closing.load(Ordering::SeqCst) {
-        return NAPI_CLOSING;
+    if is_blocking != NAPI_TSFN_NONBLOCKING && is_blocking != NAPI_TSFN_BLOCKING {
+        return NAPI_INVALID_ARG;
     }
-    match t.tx.send(Msg::Data(data as usize)) {
-        Ok(()) => NAPI_OK,
-        Err(_) => NAPI_CLOSING,
-    }
+    enqueue_data(t, data as usize, is_blocking == NAPI_TSFN_BLOCKING)
 }
 
 #[no_mangle]
@@ -235,7 +310,9 @@ pub unsafe extern "C" fn napi_release_threadsafe_function(
         Err(_) => NAPI_INVALID_ARG,
         Ok(n) => {
             if n == 1 || mode == 1 {
+                let _size = lock_queue_size(t);
                 t.closing.store(true, Ordering::SeqCst);
+                t.queue_space.notify_all();
                 let _ = t.tx.send(Msg::Close);
                 if let Some(rx) = lock_parked(t).take() {
                     start(t, rx);

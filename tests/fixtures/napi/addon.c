@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -129,6 +130,7 @@ static void *tsfn_thread(void *p) {
 }
 
 static int tsfn_finalize_count;
+static atomic_int bounded_blocking_statuses[3];
 static intptr_t cleanup_events[16];
 static size_t cleanup_event_count;
 static intptr_t instance_finalize_data[16];
@@ -234,6 +236,66 @@ static napi_value start_thread(napi_env env, napi_callback_info info) {
   pthread_create(&th, NULL, tsfn_thread, f);
   pthread_detach(th);
   return NULL;
+}
+
+static napi_value tsfn_queue_statuses(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1], result;
+  napi_tsfn f = NULL;
+  napi_status statuses[6] = {1, 1, 1, 1, 1, 1};
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  statuses[0] = napi_create_threadsafe_function(
+    env, argc > 0 ? argv[0] : NULL, NULL, NULL, 1, 1, NULL, NULL, NULL, tsfn_call_js, &f);
+  if (statuses[0] == 0) {
+    statuses[1] = napi_call_threadsafe_function(f, (void *)1, 0);
+    statuses[2] = napi_call_threadsafe_function(f, (void *)2, 0);
+    statuses[3] = napi_call_threadsafe_function(f, (void *)3, 1);
+    statuses[4] = napi_call_threadsafe_function(f, (void *)4, 2);
+    statuses[5] = napi_release_threadsafe_function(f, 0);
+  }
+  napi_create_array(env, &result);
+  for (unsigned i = 0; i < sizeof(statuses) / sizeof(statuses[0]); i++) {
+    napi_value value;
+    napi_create_double(env, statuses[i], &value);
+    napi_set_element(env, result, i, value);
+  }
+  return result;
+}
+
+static void *bounded_tsfn_thread(void *p) {
+  napi_tsfn f = (napi_tsfn)p;
+  for (intptr_t i = 1; i <= 3; i++) {
+    atomic_store(&bounded_blocking_statuses[i - 1],
+                 napi_call_threadsafe_function(f, (void *)i, 1));
+  }
+  napi_release_threadsafe_function(f, 0);
+  return NULL;
+}
+
+static napi_value start_bounded_thread(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1];
+  napi_tsfn f;
+  pthread_t th;
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  for (size_t i = 0; i < 3; i++) atomic_store(&bounded_blocking_statuses[i], -1);
+  napi_create_threadsafe_function(
+    env, argv[0], NULL, NULL, 1, 1, NULL, NULL, NULL, tsfn_call_js, &f);
+  pthread_create(&th, NULL, bounded_tsfn_thread, f);
+  pthread_detach(th);
+  return NULL;
+}
+
+static napi_value bounded_blocking_statuses_value(napi_env env, napi_callback_info info) {
+  (void)info;
+  napi_value result;
+  napi_create_array(env, &result);
+  for (unsigned i = 0; i < 3; i++) {
+    napi_value value;
+    napi_create_double(env, atomic_load(&bounded_blocking_statuses[i]), &value);
+    napi_set_element(env, result, i, value);
+  }
+  return result;
 }
 
 static napi_value tsfn_finalize_count_value(napi_env env, napi_callback_info info) {
@@ -736,6 +798,13 @@ napi_value napi_register_module_v1(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "asyncWorkCancel", fn);
   napi_create_function(env, "startThread", (size_t)-1, start_thread, NULL, &fn);
   napi_set_named_property(env, exports, "startThread", fn);
+  napi_create_function(env, "tsfnQueueStatuses", (size_t)-1, tsfn_queue_statuses, NULL, &fn);
+  napi_set_named_property(env, exports, "tsfnQueueStatuses", fn);
+  napi_create_function(env, "startBoundedThread", (size_t)-1, start_bounded_thread, NULL, &fn);
+  napi_set_named_property(env, exports, "startBoundedThread", fn);
+  napi_create_function(env, "boundedBlockingStatuses", (size_t)-1,
+                       bounded_blocking_statuses_value, NULL, &fn);
+  napi_set_named_property(env, exports, "boundedBlockingStatuses", fn);
   napi_create_function(env, "tsfnFinalizeCount", (size_t)-1, tsfn_finalize_count_value, NULL, &fn);
   napi_set_named_property(env, exports, "tsfnFinalizeCount", fn);
   napi_create_function(env, "isError", (size_t)-1, is_error_value, NULL, &fn);

@@ -39,11 +39,21 @@ assert(
 );
 assert(addon.cleanupHookEvents().length === 0, "removed cleanup hooks must not run");
 
-const completion = { threadsafe: false, promise: false, asyncWork: false };
+const completion = {
+  threadsafe: false,
+  boundedTsfn: false,
+  blockingTsfn: false,
+  promise: false,
+  asyncWork: false,
+};
 globalThis.napiIntegrationDone = false;
 const completeIfReady = () => {
   globalThis.napiIntegrationDone =
-    completion.threadsafe && completion.promise && completion.asyncWork;
+    completion.threadsafe &&
+    completion.boundedTsfn &&
+    completion.blockingTsfn &&
+    completion.promise &&
+    completion.asyncWork;
 };
 addon.resolvedPromise().then((value) => {
   assert(value === "native promise", "native promise resolution");
@@ -70,6 +80,34 @@ addon.startThread((value) => {
   if (values.length === 3) {
     assert(values.join(",") === "1,2,3", "threadsafe function calls");
     completion.threadsafe = true;
+    completeIfReady();
+  }
+});
+
+assert(
+  addon
+    .tsfnQueueStatuses((value) => {
+      assert(value === 1, "only the accepted bounded-queue item is delivered");
+      completion.boundedTsfn = true;
+      completeIfReady();
+    })
+    .join(",") === "0,0,15,15,1,0",
+  "bounded queue reports full status and rejects unknown call mode",
+);
+
+const boundedValues = [];
+addon.startBoundedThread((value) => {
+  boundedValues.push(value);
+  if (boundedValues.length === 3) {
+    assert(
+      boundedValues.join(",") === "1,2,3",
+      "blocking TSFN producers wait for bounded queue capacity",
+    );
+    assert(
+      addon.boundedBlockingStatuses().join(",") === "0,0,0",
+      "blocking calls from a worker thread succeed as queue slots open",
+    );
+    completion.blockingTsfn = true;
     completeIfReady();
   }
 });
