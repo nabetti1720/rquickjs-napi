@@ -45,7 +45,16 @@ pub unsafe extern "C" fn napi_open_callback_scope(
     result: *mut *mut c_void,
 ) -> napi_status {
     run(env, || {
-        out(result, Box::into_raw(Box::new(0u8)) as *mut c_void)
+        if result.is_null() {
+            return Err(NAPI_INVALID_ARG);
+        }
+        let mut scope = ptr::null_mut();
+        let status = open_scope(env, false, &mut scope);
+        if status != NAPI_OK {
+            return Err(status);
+        }
+        *result = scope.cast();
+        Ok(())
     })
 }
 
@@ -54,12 +63,7 @@ pub unsafe extern "C" fn napi_close_callback_scope(
     env: napi_env,
     scope: *mut c_void,
 ) -> napi_status {
-    run(env, || {
-        if !scope.is_null() {
-            drop(Box::from_raw(scope as *mut u8));
-        }
-        Ok(())
-    })
+    close_scope(env, scope.cast())
 }
 
 /// There is no libuv loop to expose.

@@ -3,20 +3,25 @@
 use super::*;
 
 pub struct Scope {
+    env: usize,
     mark: usize,
     // Slot reserved before the scope so an escaped value outlives it.
     escape_slot: Option<*mut V>,
     escaped: bool,
 }
 
-pub(super) unsafe fn open_scope(
+pub(in crate::api) unsafe fn open_scope(
     env: napi_env,
     escapable: bool,
     result: *mut *mut Scope,
 ) -> napi_status {
     run(env, || {
+        if result.is_null() {
+            return Err(NAPI_INVALID_ARG);
+        }
         let escape_slot = escapable.then(|| push(env, extend(Value::new_undefined(ctx(env)))));
         let scope = Box::new(Scope {
+            env: env as usize,
             mark: (*env).handles.len(),
             escape_slot,
             escaped: false,
@@ -25,9 +30,10 @@ pub(super) unsafe fn open_scope(
     })
 }
 
-pub(super) unsafe fn close_scope(env: napi_env, scope: *mut Scope) -> napi_status {
+pub(in crate::api) unsafe fn close_scope(env: napi_env, scope: *mut Scope) -> napi_status {
     run(env, || {
-        if scope.is_null() {
+        let scope_ref = scope.as_ref().ok_or(NAPI_INVALID_ARG)?;
+        if scope_ref.env != env as usize {
             return Err(NAPI_INVALID_ARG);
         }
         let scope = Box::from_raw(scope);
@@ -74,6 +80,9 @@ pub unsafe extern "C" fn napi_escape_handle(
 ) -> napi_status {
     run(env, || {
         let scope = scope.as_mut().ok_or(NAPI_INVALID_ARG)?;
+        if scope.env != env as usize {
+            return Err(NAPI_INVALID_ARG);
+        }
         if scope.escaped {
             return Err(NAPI_ESCAPE_CALLED_TWICE);
         }
