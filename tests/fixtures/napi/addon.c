@@ -26,6 +26,7 @@ extern napi_status napi_get_value_double(napi_env, napi_value, double *);
 extern napi_status napi_get_value_string_utf8(napi_env, napi_value, char *, size_t, size_t *);
 extern napi_status napi_create_double(napi_env, double, napi_value *);
 extern napi_status napi_create_string_utf8(napi_env, const char *, size_t, napi_value *);
+extern napi_status napi_get_global(napi_env, napi_value *);
 extern napi_status napi_coerce_to_string(napi_env, napi_value, napi_value *);
 extern napi_status napi_coerce_to_object(napi_env, napi_value, napi_value *);
 extern napi_status napi_create_function(napi_env, const char *, size_t, napi_callback, void *, napi_value *);
@@ -136,6 +137,10 @@ static int tsfn_finalize_count;
 static atomic_int bounded_blocking_statuses[3];
 static intptr_t cleanup_events[16];
 static size_t cleanup_event_count;
+static intptr_t cleanup_lifecycle_events[32];
+static size_t cleanup_lifecycle_event_count;
+static int cleanup_hook_context_statuses[16];
+static size_t cleanup_hook_context_status_count;
 static intptr_t instance_finalize_data[16];
 static intptr_t instance_finalize_hints[16];
 static size_t instance_finalize_count;
@@ -147,6 +152,10 @@ static void instance_data_finalize(napi_env env, void *data, void *hint) {
     instance_finalize_data[instance_finalize_count] = (intptr_t)data;
     instance_finalize_hints[instance_finalize_count] = (intptr_t)hint;
     instance_finalize_count++;
+  }
+  if (cleanup_lifecycle_event_count < sizeof(cleanup_lifecycle_events) /
+                                      sizeof(cleanup_lifecycle_events[0])) {
+    cleanup_lifecycle_events[cleanup_lifecycle_event_count++] = -(intptr_t)data;
   }
 }
 
@@ -181,6 +190,53 @@ static void cleanup_hook(void *arg) {
   if (cleanup_event_count < sizeof(cleanup_events) / sizeof(cleanup_events[0])) {
     cleanup_events[cleanup_event_count++] = (intptr_t)arg;
   }
+  if (cleanup_lifecycle_event_count < sizeof(cleanup_lifecycle_events) /
+                                      sizeof(cleanup_lifecycle_events[0])) {
+    cleanup_lifecycle_events[cleanup_lifecycle_event_count++] = (intptr_t)arg;
+  }
+}
+
+typedef struct {
+  napi_env env;
+  intptr_t marker;
+} cleanup_hook_env_data;
+
+static void cleanup_hook_with_env(void *arg) {
+  cleanup_hook_env_data *data = (cleanup_hook_env_data *)arg;
+  napi_value global;
+  napi_status status = napi_get_global(data->env, &global);
+  if (status == 0) {
+    int type;
+    status = napi_typeof(data->env, global, &type);
+  }
+  if (cleanup_hook_context_status_count < sizeof(cleanup_hook_context_statuses) /
+                                          sizeof(cleanup_hook_context_statuses[0])) {
+    cleanup_hook_context_statuses[cleanup_hook_context_status_count++] = status;
+  }
+  if (cleanup_lifecycle_event_count < sizeof(cleanup_lifecycle_events) /
+                                      sizeof(cleanup_lifecycle_events[0])) {
+    cleanup_lifecycle_events[cleanup_lifecycle_event_count++] = data->marker;
+  }
+  free(data);
+}
+
+static napi_value add_cleanup_hook_using_env(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1], result;
+  double marker = 0;
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  if (argc > 0) napi_get_value_double(env, argv[0], &marker);
+  cleanup_hook_env_data *data = (cleanup_hook_env_data *)malloc(sizeof(*data));
+  if (data == NULL) {
+    napi_create_double(env, 9, &result);
+    return result;
+  }
+  data->env = env;
+  data->marker = (intptr_t)marker;
+  napi_status status = napi_add_env_cleanup_hook(env, cleanup_hook_with_env, data);
+  if (status != 0) free(data);
+  napi_create_double(env, (double)status, &result);
+  return result;
 }
 
 static napi_value add_cleanup_hook(napi_env env, napi_callback_info info) {
@@ -212,6 +268,38 @@ static napi_value cleanup_hook_events(napi_env env, napi_callback_info info) {
   for (size_t i = 0; i < cleanup_event_count; i++) {
     napi_value value;
     napi_create_double(env, (double)cleanup_events[i], &value);
+    napi_set_element(env, result, (unsigned)i, value);
+  }
+  return result;
+}
+
+static napi_value reset_cleanup_lifecycle_events(napi_env env, napi_callback_info info) {
+  (void)env;
+  (void)info;
+  cleanup_lifecycle_event_count = 0;
+  cleanup_hook_context_status_count = 0;
+  return NULL;
+}
+
+static napi_value cleanup_lifecycle_events_value(napi_env env, napi_callback_info info) {
+  (void)info;
+  napi_value result;
+  napi_create_array(env, &result);
+  for (size_t i = 0; i < cleanup_lifecycle_event_count; i++) {
+    napi_value value;
+    napi_create_double(env, (double)cleanup_lifecycle_events[i], &value);
+    napi_set_element(env, result, (unsigned)i, value);
+  }
+  return result;
+}
+
+static napi_value cleanup_hook_context_statuses_value(napi_env env, napi_callback_info info) {
+  (void)info;
+  napi_value result;
+  napi_create_array(env, &result);
+  for (size_t i = 0; i < cleanup_hook_context_status_count; i++) {
+    napi_value value;
+    napi_create_double(env, (double)cleanup_hook_context_statuses[i], &value);
     napi_set_element(env, result, (unsigned)i, value);
   }
   return result;
@@ -868,6 +956,18 @@ napi_value napi_register_module_v1(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "removeCleanupHook", fn);
   napi_create_function(env, "cleanupHookEvents", (size_t)-1, cleanup_hook_events, NULL, &fn);
   napi_set_named_property(env, exports, "cleanupHookEvents", fn);
+  napi_create_function(env, "addCleanupHookUsingEnv", (size_t)-1,
+                       add_cleanup_hook_using_env, NULL, &fn);
+  napi_set_named_property(env, exports, "addCleanupHookUsingEnv", fn);
+  napi_create_function(env, "resetCleanupLifecycleEvents", (size_t)-1,
+                       reset_cleanup_lifecycle_events, NULL, &fn);
+  napi_set_named_property(env, exports, "resetCleanupLifecycleEvents", fn);
+  napi_create_function(env, "cleanupLifecycleEvents", (size_t)-1,
+                       cleanup_lifecycle_events_value, NULL, &fn);
+  napi_set_named_property(env, exports, "cleanupLifecycleEvents", fn);
+  napi_create_function(env, "cleanupHookContextStatuses", (size_t)-1,
+                       cleanup_hook_context_statuses_value, NULL, &fn);
+  napi_set_named_property(env, exports, "cleanupHookContextStatuses", fn);
   napi_create_function(env, "callbackScopeStatuses", (size_t)-1, callback_scope_statuses, NULL, &fn);
   napi_set_named_property(env, exports, "callbackScopeStatuses", fn);
   napi_create_function(env, "saveCallbackScope", (size_t)-1, save_callback_scope, NULL, &fn);

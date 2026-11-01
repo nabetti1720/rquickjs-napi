@@ -20,16 +20,13 @@ mod values;
 use std::{
     ffi::{c_char, c_int, c_void, CStr, CString},
     mem, ptr, result, slice,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Mutex,
-    },
+    sync::{atomic::Ordering, Mutex},
 };
 
 use libc::{dlerror, dlopen, dlsym, RTLD_LAZY, RTLD_LOCAL};
 use rquickjs::{
     function::{Args, Rest, This},
-    qjs, Array, Ctx, Error, Exception, Function, Object, Result, Value,
+    qjs, Array, Ctx, Error, Exception, Function, JsLifetime, Object, Result, Value,
 };
 
 use self::{
@@ -67,7 +64,40 @@ type Status<T> = result::Result<T, napi_status>;
 
 const NAPI_AUTO_LENGTH: usize = usize::MAX;
 static ADDON_LOAD_LOCK: Mutex<()> = Mutex::new(());
-static NEXT_ENV_ANCHOR: AtomicUsize = AtomicUsize::new(1);
+
+#[derive(Default)]
+struct EnvRegistry {
+    anchors: Mutex<Vec<EnvAnchor>>,
+}
+
+struct EnvAnchor {
+    ctx: ptr::NonNull<qjs::JSContext>,
+    value: qjs::JSValue,
+}
+
+unsafe impl<'js> JsLifetime<'js> for EnvRegistry {
+    type Changed<'to> = EnvRegistry;
+}
+
+impl Drop for EnvRegistry {
+    fn drop(&mut self) {
+        // rquickjs clears runtime userdata before JS_FreeRuntime. Release each
+        // anchor while its context is still pinned so N-API callbacks can use it.
+        let anchors = match self.anchors.get_mut() {
+            Ok(anchors) => anchors,
+            Err(poisoned) => {
+                eprintln!("Recovering poisoned N-API environment registry");
+                poisoned.into_inner()
+            }
+        };
+        for anchor in anchors.drain(..) {
+            unsafe {
+                qjs::JS_FreeValue(anchor.ctx.as_ptr(), anchor.value);
+                qjs::JS_FreeContext(anchor.ctx.as_ptr());
+            }
+        }
+    }
+}
 
 #[repr(C)]
 pub struct napi_extended_error_info {
@@ -90,7 +120,7 @@ pub struct napi_property_descriptor {
 }
 
 pub struct Env {
-    // Raw pointer: holding a `Ctx` would keep the context alive and leak at runtime shutdown.
+    // The runtime-owned EnvRegistry pins the context until this Env is finalized.
     ctx: ptr::NonNull<qjs::JSContext>,
     // Boxed so that `napi_value` pointers stay stable when the vector grows.
     #[allow(clippy::vec_box)]
@@ -107,6 +137,21 @@ pub struct Env {
 struct CleanupHook {
     callback: usize,
     arg: usize,
+}
+
+fn register_env_anchor(ctx: &Ctx<'_>, value: qjs::JSValue) -> Result<()> {
+    if ctx.userdata::<EnvRegistry>().is_none() {
+        ctx.store_userdata(EnvRegistry::default())
+            .map_err(|_| Error::Unknown)?;
+    }
+    let registry = ctx.userdata::<EnvRegistry>().ok_or(Error::Unknown)?;
+    let mut anchors = registry.anchors.lock().map_err(|_| Error::Unknown)?;
+    unsafe { qjs::JS_DupContext(ctx.as_raw().as_ptr()) };
+    anchors.push(EnvAnchor {
+        ctx: ctx.as_raw(),
+        value,
+    });
+    Ok(())
 }
 
 unsafe extern "C" fn env_finalizer(_rt: *mut qjs::JSRuntime, value: qjs::JSValue) {
@@ -130,7 +175,10 @@ unsafe extern "C" fn env_finalizer(_rt: *mut qjs::JSRuntime, value: qjs::JSValue
             break;
         };
         let callback: napi_cleanup_hook = mem::transmute(hook.callback);
+        let mark = (*env).handles.len();
         callback(hook.arg as *mut c_void);
+        (*env).handles.truncate(mark);
+        (*env).exception.take();
     }
     if let Some(callback) = (*env).instance_finalize_cb.take() {
         let mark = (*env).handles.len();
@@ -175,35 +223,13 @@ fn anchor_env(ctx: &Ctx<'_>, env: Box<Env>) -> Result<napi_env> {
         return Err(Error::Unknown);
     }
 
-    let global = unsafe { qjs::JS_GetGlobalObject(ctx_ptr) };
-    let anchor_id = NEXT_ENV_ANCHOR.fetch_add(1, Ordering::Relaxed);
-    let name = CString::new(format!("__rquickjs_napi_env_{anchor_id}"))
-        .expect("generated anchor name has no NUL bytes");
-    let status = unsafe {
-        qjs::JS_DefinePropertyValueStr(
-            ctx_ptr,
-            global,
-            name.as_ptr(),
-            qjs::JS_DupValue(ctx_ptr, anchor),
-            0,
-        )
-    };
-    if status <= 0 {
+    if let Err(err) = register_env_anchor(ctx, anchor) {
         unsafe {
             qjs::JS_SetOpaque(anchor, ptr::null_mut());
-            qjs::JS_FreeValue(ctx_ptr, anchor);
-            qjs::JS_FreeValue(ctx_ptr, global);
             drop(Box::from_raw(env));
+            qjs::JS_FreeValue(ctx_ptr, anchor);
         }
-        return Err(if status < 0 {
-            Error::Exception
-        } else {
-            Error::Unknown
-        });
-    }
-    unsafe {
-        qjs::JS_FreeValue(ctx_ptr, anchor);
-        qjs::JS_FreeValue(ctx_ptr, global);
+        return Err(err);
     }
     Ok(env as napi_env)
 }
