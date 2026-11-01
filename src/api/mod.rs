@@ -20,7 +20,10 @@ mod values;
 use std::{
     ffi::{c_char, c_int, c_void, CStr, CString},
     mem, ptr, result, slice,
-    sync::{atomic::Ordering, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Mutex,
+    },
 };
 
 use libc::{dlerror, dlopen, dlsym, RTLD_LAZY, RTLD_LOCAL};
@@ -41,6 +44,7 @@ type napi_value = *mut V;
 type napi_callback_info = *mut c_void;
 type napi_callback = unsafe extern "C" fn(napi_env, napi_callback_info) -> napi_value;
 type napi_finalize = unsafe extern "C" fn(napi_env, *mut c_void, *mut c_void);
+type napi_cleanup_hook = unsafe extern "C" fn(*mut c_void);
 type napi_async_execute = unsafe extern "C" fn(napi_env, *mut c_void);
 type napi_async_complete = unsafe extern "C" fn(napi_env, napi_status, *mut c_void);
 type napi_addon_init = unsafe extern "C" fn(napi_env, napi_value) -> napi_value;
@@ -62,6 +66,7 @@ type Status<T> = result::Result<T, napi_status>;
 
 const NAPI_AUTO_LENGTH: usize = usize::MAX;
 static ADDON_LOAD_LOCK: Mutex<()> = Mutex::new(());
+static NEXT_ENV_ANCHOR: AtomicUsize = AtomicUsize::new(1);
 
 #[repr(C)]
 pub struct napi_extended_error_info {
@@ -92,6 +97,102 @@ pub struct Env {
     exception: Option<V>,
     last_error: napi_extended_error_info,
     instance_data: *mut c_void,
+    cleanup_hooks: Mutex<Vec<CleanupHook>>,
+}
+
+#[derive(Clone, Copy)]
+struct CleanupHook {
+    callback: usize,
+    arg: usize,
+}
+
+unsafe extern "C" fn env_finalizer(_rt: *mut qjs::JSRuntime, value: qjs::JSValue) {
+    let mut class_id = 0;
+    let opaque = qjs::JS_GetAnyOpaque(value, &mut class_id);
+    if opaque.is_null() {
+        return;
+    }
+
+    qjs::JS_SetOpaque(value, ptr::null_mut());
+    let env = opaque as napi_env;
+    loop {
+        let hook = match (*env).cleanup_hooks.lock() {
+            Ok(mut hooks) => hooks.pop(),
+            Err(poisoned) => {
+                eprintln!("Recovering poisoned N-API cleanup hook list");
+                poisoned.into_inner().pop()
+            }
+        };
+        let Some(hook) = hook else {
+            break;
+        };
+        let callback: napi_cleanup_hook = mem::transmute(hook.callback);
+        callback(hook.arg as *mut c_void);
+    }
+    drop(Box::from_raw(env));
+}
+
+fn anchor_env(ctx: &Ctx<'_>, env: Box<Env>) -> Result<napi_env> {
+    let ctx_ptr = ctx.as_raw().as_ptr();
+    let runtime = unsafe { qjs::JS_GetRuntime(ctx_ptr) };
+    let mut class_id = 0;
+    unsafe { qjs::JS_NewClassID(runtime, &mut class_id) };
+    let class_def = qjs::JSClassDef {
+        class_name: c"RquickjsNapiEnv".as_ptr(),
+        finalizer: Some(env_finalizer),
+        gc_mark: None,
+        call: None,
+        exotic: ptr::null_mut(),
+    };
+    if unsafe { qjs::JS_NewClass(runtime, class_id, &class_def) } < 0 {
+        return Err(Error::Unknown);
+    }
+
+    let anchor = unsafe { qjs::JS_NewObjectClass(ctx_ptr, class_id) };
+    if unsafe { qjs::JS_IsException(anchor) } {
+        return Err(Error::Exception);
+    }
+    let env = Box::into_raw(env);
+    if unsafe { qjs::JS_SetOpaque(anchor, env.cast()) } != 0 {
+        unsafe {
+            qjs::JS_SetOpaque(anchor, ptr::null_mut());
+            drop(Box::from_raw(env));
+            qjs::JS_FreeValue(ctx_ptr, anchor);
+        }
+        return Err(Error::Unknown);
+    }
+
+    let global = unsafe { qjs::JS_GetGlobalObject(ctx_ptr) };
+    let anchor_id = NEXT_ENV_ANCHOR.fetch_add(1, Ordering::Relaxed);
+    let name = CString::new(format!("__rquickjs_napi_env_{anchor_id}"))
+        .expect("generated anchor name has no NUL bytes");
+    let status = unsafe {
+        qjs::JS_DefinePropertyValueStr(
+            ctx_ptr,
+            global,
+            name.as_ptr(),
+            qjs::JS_DupValue(ctx_ptr, anchor),
+            0,
+        )
+    };
+    if status <= 0 {
+        unsafe {
+            qjs::JS_SetOpaque(anchor, ptr::null_mut());
+            qjs::JS_FreeValue(ctx_ptr, anchor);
+            qjs::JS_FreeValue(ctx_ptr, global);
+            drop(Box::from_raw(env));
+        }
+        return Err(if status < 0 {
+            Error::Exception
+        } else {
+            Error::Unknown
+        });
+    }
+    unsafe {
+        qjs::JS_FreeValue(ctx_ptr, anchor);
+        qjs::JS_FreeValue(ctx_ptr, global);
+    }
+    Ok(env as napi_env)
 }
 
 unsafe fn extend<'js>(v: Value<'js>) -> V {
@@ -241,19 +342,20 @@ pub(crate) fn load_addon<'js>(ctx: &Ctx<'js>, path: &str) -> Result<Value<'js>> 
         (handle, init)
     };
 
-    // The environment lives for as long as the addon's functions can be called.
-    let env: napi_env = Box::into_raw(Box::new(Env {
+    let env = Box::new(Env {
         ctx: ctx.as_raw(),
         handles: Vec::new(),
         exception: None,
         instance_data: ptr::null_mut(),
+        cleanup_hooks: Mutex::new(Vec::new()),
         last_error: napi_extended_error_info {
             error_message: ptr::null(),
             engine_reserved: ptr::null_mut(),
             engine_error_code: 0,
             error_code: NAPI_OK,
         },
-    }));
+    });
+    let env = anchor_env(ctx, env)?;
 
     let exports_value = Object::new(ctx.clone())?.into_value();
     let exports_handle = push(env, unsafe { extend(exports_value.clone()) });

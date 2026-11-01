@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use rquickjs::{
     loader::{ImportAttributes, Resolver},
-    AsyncContext, AsyncRuntime, Ctx, Error, Module, Result,
+    AsyncContext, AsyncRuntime, Context, Ctx, Error, Module, Result, Runtime,
 };
 use rquickjs_napi::NapiLoader;
 
@@ -80,4 +80,82 @@ fn loads_and_runs_napi_addon_in_rquickjs() {
             .expect("read TSFN finalizer count");
         assert_eq!(finalize_count, 1, "unref'd threadsafe function finalizer");
     });
+
+    {
+        let runtime = Runtime::new().expect("create sync runtime for cleanup-hook lifecycle");
+        runtime.set_loader(AddonResolver, NapiLoader);
+
+        let context = Context::full(&runtime).expect("create first cleanup-hook context");
+        context
+            .with(|ctx| {
+                Module::evaluate(
+                    ctx.clone(),
+                    "cleanup-hooks.mjs",
+                    "import addon from './addon.node'; \
+                     if (addon.addCleanupHook(1) !== 0 || \
+                         addon.addCleanupHook(2) !== 0 || \
+                         addon.addCleanupHook(4) !== 0 || \
+                         addon.addCleanupHook(4) !== 1 || \
+                         addon.removeCleanupHook(2) !== 0 || \
+                         addon.removeCleanupHook(99) !== 0 || \
+                         addon.addCleanupHook(3) !== 0 || \
+                         addon.addCleanupHook(9) !== 0 || \
+                         addon.removeCleanupHook(9) !== 0) \
+                       throw new Error('cleanup hook registration failed');",
+                )?
+                .finish::<()>()?;
+                Ok::<(), rquickjs::Error>(())
+            })
+            .expect("register cleanup hooks in first environment");
+
+        let context = Context::full(&runtime).expect("create second cleanup-hook context");
+        context
+            .with(|ctx| {
+                Module::evaluate(
+                    ctx.clone(),
+                    "cleanup-hooks-second.mjs",
+                    "import addon from './addon.node'; \
+                     if (addon.addCleanupHook(9) !== 0 || \
+                         addon.addCleanupHook(8) !== 0) \
+                       throw new Error('cleanup hook registration failed');",
+                )?
+                .finish::<()>()?;
+                Ok::<(), rquickjs::Error>(())
+            })
+            .expect("register cleanup hooks in second environment");
+    }
+
+    let runtime = Runtime::new().expect("create runtime to inspect cleanup hooks");
+    runtime.set_loader(AddonResolver, NapiLoader);
+    let context = Context::full(&runtime).expect("create cleanup-hook verification context");
+    context
+        .with(|ctx| {
+            Module::evaluate(
+                ctx.clone(),
+                "cleanup-hooks-verify.mjs",
+                "import addon from './addon.node'; \
+                 globalThis.cleanupAddon = addon;",
+            )?
+            .finish::<()>()?;
+            let events: String = ctx.eval("cleanupAddon.cleanupHookEvents().join(',')")?;
+            let events: Vec<i32> = events
+                .split(',')
+                .map(|event| event.parse().expect("cleanup event is an integer"))
+                .collect();
+            let position = |marker| events.iter().position(|event| *event == marker).unwrap();
+            assert_eq!(
+                events.len(),
+                5,
+                "removed and distinct-argument hooks run once"
+            );
+            assert!(position(3) < position(4) && position(4) < position(1));
+            assert!(position(8) < position(9));
+            assert_eq!(
+                events.iter().filter(|event| **event == 9).count(),
+                1,
+                "removal in one environment must not remove another environment's hook"
+            );
+            Ok::<(), rquickjs::Error>(())
+        })
+        .expect("verify cleanup-hook order and environment isolation");
 }

@@ -128,7 +128,49 @@ static void *tsfn_thread(void *p) {
 }
 
 static int tsfn_finalize_count;
-static void cleanup_hook(void *arg) { (void)arg; }
+static intptr_t cleanup_events[16];
+static size_t cleanup_event_count;
+
+static void cleanup_hook(void *arg) {
+  if (cleanup_event_count < sizeof(cleanup_events) / sizeof(cleanup_events[0])) {
+    cleanup_events[cleanup_event_count++] = (intptr_t)arg;
+  }
+}
+
+static napi_value add_cleanup_hook(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1], result;
+  double marker = 0;
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  if (argc > 0) napi_get_value_double(env, argv[0], &marker);
+  napi_status status = napi_add_env_cleanup_hook(env, cleanup_hook, (void *)(intptr_t)marker);
+  napi_create_double(env, (double)status, &result);
+  return result;
+}
+
+static napi_value remove_cleanup_hook(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1], result;
+  double marker = 0;
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  if (argc > 0) napi_get_value_double(env, argv[0], &marker);
+  napi_status status = napi_remove_env_cleanup_hook(env, cleanup_hook, (void *)(intptr_t)marker);
+  napi_create_double(env, (double)status, &result);
+  return result;
+}
+
+static napi_value cleanup_hook_events(napi_env env, napi_callback_info info) {
+  (void)info;
+  napi_value result;
+  napi_create_array(env, &result);
+  for (size_t i = 0; i < cleanup_event_count; i++) {
+    napi_value value;
+    napi_create_double(env, (double)cleanup_events[i], &value);
+    napi_set_element(env, result, (unsigned)i, value);
+  }
+  return result;
+}
+
 static void async_cleanup_hook(napi_async_cleanup_hook_handle handle, void *arg) {
   (void)handle;
   (void)arg;
@@ -215,12 +257,13 @@ static napi_value dataview_info_status(napi_env env, napi_callback_info info) {
 
 static napi_value cleanup_hook_statuses(napi_env env, napi_callback_info info) {
   (void)info;
-  napi_status statuses[4];
+  napi_status statuses[5];
   napi_async_cleanup_hook_handle handle = NULL;
-  statuses[0] = napi_add_env_cleanup_hook(env, cleanup_hook, NULL);
-  statuses[1] = napi_remove_env_cleanup_hook(env, cleanup_hook, NULL);
+  statuses[0] = napi_add_env_cleanup_hook(NULL, cleanup_hook, NULL);
+  statuses[1] = napi_add_env_cleanup_hook(env, NULL, NULL);
   statuses[2] = napi_add_async_cleanup_hook(env, async_cleanup_hook, NULL, &handle);
-  statuses[3] = napi_remove_async_cleanup_hook(handle);
+  statuses[3] = napi_add_async_cleanup_hook(env, async_cleanup_hook, NULL, NULL);
+  statuses[4] = napi_remove_async_cleanup_hook(handle);
 
   napi_value result;
   napi_create_array(env, &result);
@@ -637,6 +680,12 @@ napi_value napi_register_module_v1(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "dataviewInfoStatus", fn);
   napi_create_function(env, "cleanupHookStatuses", (size_t)-1, cleanup_hook_statuses, NULL, &fn);
   napi_set_named_property(env, exports, "cleanupHookStatuses", fn);
+  napi_create_function(env, "addCleanupHook", (size_t)-1, add_cleanup_hook, NULL, &fn);
+  napi_set_named_property(env, exports, "addCleanupHook", fn);
+  napi_create_function(env, "removeCleanupHook", (size_t)-1, remove_cleanup_hook, NULL, &fn);
+  napi_set_named_property(env, exports, "removeCleanupHook", fn);
+  napi_create_function(env, "cleanupHookEvents", (size_t)-1, cleanup_hook_events, NULL, &fn);
+  napi_set_named_property(env, exports, "cleanupHookEvents", fn);
   napi_create_function(env, "bigints", (size_t)-1, bigints, NULL, &fn);
   napi_set_named_property(env, exports, "bigints", fn);
   napi_create_function(env, "misc", (size_t)-1, misc, NULL, &fn);

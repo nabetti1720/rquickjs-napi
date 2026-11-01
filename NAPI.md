@@ -37,7 +37,7 @@ The implementation provides N-API entry points in these areas:
 | References and lifetimes | Handle scopes, escapable scopes, references, object wrapping/unwrapping, external values, finalizers |
 | Binary data | ArrayBuffers, external ArrayBuffers, typed arrays, DataViews, Buffers, data and length accessors |
 | Async APIs | Promises and deferreds, async work, callback scopes, async context helpers, thread-safe functions |
-| Other | Script execution, instance data access, external-memory adjustment, ArrayBuffer detach checks |
+| Other | Script execution, instance data access, synchronous environment cleanup hooks, external-memory adjustment, ArrayBuffer detach checks |
 
 This list describes implemented API families, not complete Node.js compatibility.
 Check the implementation and tests for the exact behavior of a particular API.
@@ -46,7 +46,8 @@ Check the implementation and tests for the exact behavior of a particular API.
 
 | API or behavior | Current behavior |
 | --- | --- |
-| Environment cleanup hooks (`napi_add_env_cleanup_hook`, `napi_remove_env_cleanup_hook`, `napi_add_async_cleanup_hook`, `napi_remove_async_cleanup_hook`) | Unsupported. Calls return `napi_generic_failure`. |
+| Synchronous environment cleanup hooks (`napi_add_env_cleanup_hook`, `napi_remove_env_cleanup_hook`) | Hooks and arguments are stored per addon environment and execute in reverse registration order when the owning QuickJS context is destroyed. Reusing a callback with different arguments is supported; an identical callback/argument pair is rejected with `napi_invalid_arg` rather than Node.js's process-aborting behavior. Removing an unregistered pair is a successful no-op. Null environment/function arguments return `napi_invalid_arg`. |
+| Asynchronous environment cleanup hooks (`napi_add_async_cleanup_hook`, `napi_remove_async_cleanup_hook`) | Unsupported because this crate cannot pause QuickJS context destruction while asynchronous cleanup is pending. A null hook or null remove handle returns `napi_invalid_arg`; otherwise calls return `napi_generic_failure`. |
 | `napi_get_uv_event_loop` | No libuv loop is exposed; the call returns `napi_generic_failure`. |
 | `napi_cancel_async_work` | Cancellation is unsupported and returns `napi_generic_failure`. |
 | Instance-data finalizer in `napi_set_instance_data` | The data pointer can be stored and retrieved, but the finalizer and hint are not invoked. |
@@ -55,8 +56,9 @@ Check the implementation and tests for the exact behavior of a particular API.
 | Node.js and libuv integration | Node.js modules, the Node event loop, and libuv handles are not provided. |
 
 Do not rely on a function merely being present in the N-API symbol table as proof
-of full Node.js-equivalent semantics. In particular, review the limitations
-above before using async work, thread-safe functions, or environment teardown.
+of full Node.js-equivalent semantics. Synchronous cleanup hooks run at QuickJS
+context destruction; asynchronous cleanup hooks and Node.js environment teardown
+integration are not provided.
 
 ## Testing
 
