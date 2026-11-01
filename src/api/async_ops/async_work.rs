@@ -68,7 +68,7 @@ pub unsafe extern "C" fn napi_queue_async_work(env: napi_env, work: *mut AsyncWo
         let (tx, rx) = oneshot::channel::<()>();
         thread::spawn(move || {
             let execute: napi_async_execute = mem::transmute(execute);
-            execute(env_addr as napi_env, data as *mut c_void);
+            execute(ptr::null_mut(), data as *mut c_void);
             let _ = tx.send(());
         });
         ctx(env).spawn(async move {

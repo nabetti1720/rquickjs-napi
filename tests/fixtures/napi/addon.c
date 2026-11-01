@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <pthread.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 typedef struct napi_env__ *napi_env;
@@ -64,6 +65,13 @@ extern napi_status napi_create_dataview(napi_env, size_t, napi_value, size_t, na
 extern napi_status napi_get_dataview_info(napi_env, napi_value, size_t *, void **, napi_value *, size_t *);
 extern napi_status napi_create_promise(napi_env, void **, napi_value *);
 extern napi_status napi_resolve_deferred(napi_env, void *, napi_value);
+typedef struct napi_async_work__ *napi_async_work;
+typedef void (*napi_async_execute)(napi_env, void *);
+typedef void (*napi_async_complete)(napi_env, napi_status, void *);
+extern napi_status napi_create_async_work(napi_env, napi_value, napi_value, napi_async_execute,
+                                          napi_async_complete, void *, napi_async_work *);
+extern napi_status napi_queue_async_work(napi_env, napi_async_work);
+extern napi_status napi_delete_async_work(napi_env, napi_async_work);
 extern napi_status napi_is_buffer(napi_env, napi_value, _Bool *);
 extern napi_status napi_is_error(napi_env, napi_value, _Bool *);
 extern napi_status napi_is_arraybuffer(napi_env, napi_value, _Bool *);
@@ -532,6 +540,39 @@ static napi_value resolved_promise(napi_env env, napi_callback_info info) {
   return promise;
 }
 
+typedef struct {
+  napi_async_work work;
+  void *deferred;
+  int execute_env_was_null;
+} async_work_data;
+
+static void async_work_execute(napi_env env, void *data) {
+  ((async_work_data *)data)->execute_env_was_null = env == NULL;
+}
+
+static void async_work_complete(napi_env env, napi_status status, void *data) {
+  (void)status;
+  async_work_data *work_data = (async_work_data *)data;
+  napi_value result, env_was_null;
+  napi_create_object(env, &result);
+  napi_get_boolean(env, work_data->execute_env_was_null, &env_was_null);
+  napi_set_named_property(env, result, "executeEnvWasNull", env_was_null);
+  napi_resolve_deferred(env, work_data->deferred, result);
+  napi_delete_async_work(env, work_data->work);
+  free(work_data);
+}
+
+static napi_value async_work_promise(napi_env env, napi_callback_info info) {
+  (void)info;
+  async_work_data *data = calloc(1, sizeof(async_work_data));
+  napi_value promise;
+  napi_create_promise(env, &data->deferred, &promise);
+  napi_create_async_work(env, NULL, NULL, async_work_execute, async_work_complete, data,
+                         &data->work);
+  napi_queue_async_work(env, data->work);
+  return promise;
+}
+
 napi_value napi_register_module_v1(napi_env env, napi_value exports) {
   napi_value fn;
   napi_create_function(env, "externalArrayBuffer", (size_t)-1, external_arraybuffer, NULL, &fn);
@@ -578,6 +619,8 @@ napi_value napi_register_module_v1(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "isArrayBuffer", fn);
   napi_create_function(env, "resolvedPromise", (size_t)-1, resolved_promise, NULL, &fn);
   napi_set_named_property(env, exports, "resolvedPromise", fn);
+  napi_create_function(env, "asyncWork", (size_t)-1, async_work_promise, NULL, &fn);
+  napi_set_named_property(env, exports, "asyncWork", fn);
   napi_create_function(env, "startThread", (size_t)-1, start_thread, NULL, &fn);
   napi_set_named_property(env, exports, "startThread", fn);
   napi_create_function(env, "tsfnFinalizeCount", (size_t)-1, tsfn_finalize_count_value, NULL, &fn);

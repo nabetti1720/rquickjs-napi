@@ -38,16 +38,22 @@ assert(
   "unsupported cleanup hooks must report failure",
 );
 
-const completion = { threadsafe: false, promise: false };
+const completion = { threadsafe: false, promise: false, asyncWork: false };
 globalThis.napiIntegrationDone = false;
 const completeIfReady = () => {
-  globalThis.napiIntegrationDone = completion.threadsafe && completion.promise;
+  globalThis.napiIntegrationDone =
+    completion.threadsafe && completion.promise && completion.asyncWork;
 };
 addon.resolvedPromise().then((value) => {
   assert(value === "native promise", "native promise resolution");
   completion.promise = true;
   completeIfReady();
 });
+
+const asyncWorkResult = await addon.asyncWork();
+assert(asyncWorkResult.executeEnvWasNull, "async execute callback receives a null env");
+completion.asyncWork = true;
+completeIfReady();
 
 const values = [];
 addon.startThread((value) => {
