@@ -52,7 +52,7 @@ extern napi_status napi_object_freeze(napi_env, napi_value);
 extern napi_status napi_object_seal(napi_env, napi_value);
 extern napi_status napi_instanceof(napi_env, napi_value, napi_value, _Bool *);
 extern napi_status napi_get_new_target(napi_env, napi_callback_info, napi_value *);
-extern napi_status napi_set_instance_data(napi_env, void *, void *, void *);
+extern napi_status napi_set_instance_data(napi_env, void *, napi_finalize, void *);
 extern napi_status napi_get_instance_data(napi_env, void **);
 extern napi_status napi_create_arraybuffer(napi_env, size_t, void **, napi_value *);
 extern napi_status napi_create_external_arraybuffer(napi_env, void *, size_t, napi_finalize, void *, napi_value *);
@@ -130,6 +130,45 @@ static void *tsfn_thread(void *p) {
 static int tsfn_finalize_count;
 static intptr_t cleanup_events[16];
 static size_t cleanup_event_count;
+static intptr_t instance_finalize_data[16];
+static intptr_t instance_finalize_hints[16];
+static size_t instance_finalize_count;
+
+static void instance_data_finalize(napi_env env, void *data, void *hint) {
+  (void)env;
+  if (instance_finalize_count < sizeof(instance_finalize_data) / sizeof(instance_finalize_data[0])) {
+    instance_finalize_data[instance_finalize_count] = (intptr_t)data;
+    instance_finalize_hints[instance_finalize_count] = (intptr_t)hint;
+    instance_finalize_count++;
+  }
+}
+
+static napi_value set_instance_data_with_finalizer(napi_env env, napi_callback_info info) {
+  size_t argc = 2;
+  napi_value argv[2], result;
+  double data = 0, hint = 0;
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+  if (argc > 0) napi_get_value_double(env, argv[0], &data);
+  if (argc > 1) napi_get_value_double(env, argv[1], &hint);
+  napi_status status = napi_set_instance_data(
+    env, (void *)(intptr_t)data, instance_data_finalize, (void *)(intptr_t)hint);
+  napi_create_double(env, (double)status, &result);
+  return result;
+}
+
+static napi_value instance_data_finalize_events(napi_env env, napi_callback_info info) {
+  (void)info;
+  napi_value result;
+  napi_create_array(env, &result);
+  for (size_t i = 0; i < instance_finalize_count; i++) {
+    napi_value data, hint;
+    napi_create_double(env, (double)instance_finalize_data[i], &data);
+    napi_create_double(env, (double)instance_finalize_hints[i], &hint);
+    napi_set_element(env, result, (unsigned)(i * 2), data);
+    napi_set_element(env, result, (unsigned)(i * 2 + 1), hint);
+  }
+  return result;
+}
 
 static void cleanup_hook(void *arg) {
   if (cleanup_event_count < sizeof(cleanup_events) / sizeof(cleanup_events[0])) {
@@ -686,6 +725,12 @@ napi_value napi_register_module_v1(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "removeCleanupHook", fn);
   napi_create_function(env, "cleanupHookEvents", (size_t)-1, cleanup_hook_events, NULL, &fn);
   napi_set_named_property(env, exports, "cleanupHookEvents", fn);
+  napi_create_function(env, "setInstanceDataWithFinalizer", (size_t)-1,
+                       set_instance_data_with_finalizer, NULL, &fn);
+  napi_set_named_property(env, exports, "setInstanceDataWithFinalizer", fn);
+  napi_create_function(env, "instanceDataFinalizeEvents", (size_t)-1,
+                       instance_data_finalize_events, NULL, &fn);
+  napi_set_named_property(env, exports, "instanceDataFinalizeEvents", fn);
   napi_create_function(env, "bigints", (size_t)-1, bigints, NULL, &fn);
   napi_set_named_property(env, exports, "bigints", fn);
   napi_create_function(env, "misc", (size_t)-1, misc, NULL, &fn);

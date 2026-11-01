@@ -82,6 +82,80 @@ fn loads_and_runs_napi_addon_in_rquickjs() {
     });
 
     {
+        let runtime = Runtime::new().expect("create runtime for instance-data finalizers");
+        runtime.set_loader(AddonResolver, NapiLoader);
+
+        let first = Context::full(&runtime).expect("create first instance-data context");
+        first
+            .with(|ctx| {
+                Module::evaluate(
+                    ctx.clone(),
+                    "instance-data-first.mjs",
+                    "import addon from './addon.node'; \
+                     if (addon.setInstanceDataWithFinalizer(1, 10) !== 0 || \
+                         addon.setInstanceDataWithFinalizer(2, 20) !== 0) \
+                       throw new Error('setting instance data failed');",
+                )?
+                .finish::<()>()?;
+                Ok::<(), rquickjs::Error>(())
+            })
+            .expect("set and replace instance data");
+
+        let second = Context::full(&runtime).expect("create second instance-data context");
+        second
+            .with(|ctx| {
+                Module::evaluate(
+                    ctx.clone(),
+                    "instance-data-second.mjs",
+                    "import addon from './addon.node'; \
+                     if (addon.setInstanceDataWithFinalizer(3, 30) !== 0) \
+                       throw new Error('setting instance data failed');",
+                )?
+                .finish::<()>()?;
+                Ok::<(), rquickjs::Error>(())
+            })
+            .expect("set instance data in separate environment");
+    }
+
+    {
+        let runtime = Runtime::new().expect("create runtime to inspect instance-data finalizers");
+        runtime.set_loader(AddonResolver, NapiLoader);
+        let context = Context::full(&runtime).expect("create instance-data verification context");
+        context
+            .with(|ctx| {
+                Module::evaluate(
+                    ctx.clone(),
+                    "instance-data-verify.mjs",
+                    "import addon from './addon.node'; \
+                     globalThis.instanceDataAddon = addon;",
+                )?
+                .finish::<()>()?;
+                let values: String =
+                    ctx.eval("instanceDataAddon.instanceDataFinalizeEvents().join(',')")?;
+                let values: Vec<i32> = values
+                    .split(',')
+                    .map(|value| {
+                        value
+                            .parse::<i32>()
+                            .expect("instance data value is integer")
+                    })
+                    .collect();
+                assert_eq!(values.len(), 4, "two environments finalize once each");
+                let (pairs, remainder) = values.as_chunks::<2>();
+                assert!(remainder.is_empty());
+                let mut pairs: Vec<_> = pairs.iter().map(|[data, hint]| (*data, *hint)).collect();
+                pairs.sort_unstable();
+                assert_eq!(
+                    pairs,
+                    [(2, 20), (3, 30)],
+                    "only the current data finalizer runs once per environment"
+                );
+                Ok::<(), rquickjs::Error>(())
+            })
+            .expect("verify instance-data finalizers");
+    }
+
+    {
         let runtime = Runtime::new().expect("create sync runtime for cleanup-hook lifecycle");
         runtime.set_loader(AddonResolver, NapiLoader);
 
