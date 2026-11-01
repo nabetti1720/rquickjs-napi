@@ -277,4 +277,87 @@ fn loads_and_runs_napi_addon_in_rquickjs() {
             Ok::<(), rquickjs::Error>(())
         })
         .expect("verify cleanup-hook order and environment isolation");
+
+    {
+        let runtime = Runtime::new().expect("create runtime for cleanup-hook context access");
+        runtime.set_loader(AddonResolver, NapiLoader);
+        {
+            let context = Context::full(&runtime).expect("create cleanup-hook context");
+            context
+                .with(|ctx| {
+                    Module::evaluate(
+                        ctx.clone(),
+                        "cleanup-hook-context.mjs",
+                        "import addon from './addon.node'; \
+                         addon.resetCleanupLifecycleEvents(); \
+                         if (addon.addCleanupHookUsingEnv(7) !== 0 || \
+                             addon.setInstanceDataWithFinalizer(50, 0) !== 0) \
+                           throw new Error('cleanup lifecycle setup failed');",
+                    )?
+                    .finish::<()>()?;
+                    Ok::<(), rquickjs::Error>(())
+                })
+                .expect("register cleanup hook with environment access");
+        }
+        {
+            let context = Context::full(&runtime).expect("create second cleanup-hook context");
+            context
+                .with(|ctx| {
+                    Module::evaluate(
+                        ctx.clone(),
+                        "cleanup-hook-context-second.mjs",
+                        "import addon from './addon.node'; \
+                         if (addon.addCleanupHookUsingEnv(8) !== 0 || \
+                             addon.setInstanceDataWithFinalizer(60, 0) !== 0) \
+                           throw new Error('second cleanup lifecycle setup failed');",
+                    )?
+                    .finish::<()>()?;
+                    Ok::<(), rquickjs::Error>(())
+                })
+                .expect("register second environment cleanup hook and finalizer");
+        }
+    }
+
+    {
+        let runtime = Runtime::new().expect("create runtime to verify cleanup-hook context access");
+        runtime.set_loader(AddonResolver, NapiLoader);
+        let context =
+            Context::full(&runtime).expect("create cleanup-hook lifecycle verification context");
+        context
+            .with(|ctx| {
+                Module::evaluate(
+                    ctx.clone(),
+                    "cleanup-hook-context-verify.mjs",
+                    "import addon from './addon.node'; \
+                     globalThis.cleanupLifecycleAddon = addon;",
+                )?
+                .finish::<()>()?;
+                let events: String =
+                    ctx.eval("cleanupLifecycleAddon.cleanupLifecycleEvents().join(',')")?;
+                let events: Vec<i32> = events
+                    .split(',')
+                    .map(|event| {
+                        event
+                            .parse()
+                            .expect("cleanup lifecycle event is an integer")
+                    })
+                    .collect();
+                let position = |marker| events.iter().position(|event| *event == marker).unwrap();
+                assert_eq!(
+                    events.len(),
+                    4,
+                    "both environments run their hook and finalizer exactly once"
+                );
+                assert!(position(7) < position(-50));
+                assert!(position(8) < position(-60));
+                let statuses: String =
+                    ctx.eval("cleanupLifecycleAddon.cleanupHookContextStatuses().join(',')")?;
+                assert_eq!(
+                    statuses, "0,0",
+                    "both callbacks can use their N-API environment"
+                );
+                Ok::<(), rquickjs::Error>(())
+            })
+            .expect("verify cleanup callback context and finalizer order");
+    }
 }
