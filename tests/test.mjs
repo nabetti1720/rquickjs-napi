@@ -34,9 +34,10 @@ assert(
 );
 
 assert(
-  addon.cleanupHookStatuses().every((status) => status !== 0),
-  "unsupported cleanup hooks must report failure",
+  addon.cleanupHookStatuses().join(",") === "1,1,9,9,1",
+  "cleanup hook argument validation, registration, removal, and async-hook limitation",
 );
+assert(addon.cleanupHookEvents().length === 0, "removed cleanup hooks must not run");
 
 const completion = { threadsafe: false, promise: false, asyncWork: false };
 globalThis.napiIntegrationDone = false;

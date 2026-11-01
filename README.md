@@ -18,10 +18,10 @@ Node-API addons in an `rquickjs` runtime; it does not run Node.js.
   other platforms.
 - Compatibility depends on the APIs used by each addon; compatibility with
   every Node.js native addon is not guaranteed.
-- Environment cleanup hooks are unsupported because safe execution requires
-  integration with full environment teardown. The add/remove operations for
-  both synchronous and asynchronous cleanup hooks return `napi_generic_failure`
-  rather than reporting success.
+- Synchronous environment cleanup hooks run in reverse registration order when
+  their QuickJS context is destroyed. Asynchronous cleanup hooks remain
+  unsupported because QuickJS context destruction cannot be paused while they
+  are pending; valid calls return `napi_generic_failure`.
 
 See [NAPI.md](NAPI.md) for the implemented API areas and known limitations.
 
