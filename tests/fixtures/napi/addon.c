@@ -71,6 +71,7 @@ typedef void (*napi_async_complete)(napi_env, napi_status, void *);
 extern napi_status napi_create_async_work(napi_env, napi_value, napi_value, napi_async_execute,
                                           napi_async_complete, void *, napi_async_work *);
 extern napi_status napi_queue_async_work(napi_env, napi_async_work);
+extern napi_status napi_cancel_async_work(napi_env, napi_async_work);
 extern napi_status napi_delete_async_work(napi_env, napi_async_work);
 extern napi_status napi_is_buffer(napi_env, napi_value, _Bool *);
 extern napi_status napi_is_error(napi_env, napi_value, _Bool *);
@@ -626,33 +627,61 @@ typedef struct {
   napi_async_work work;
   void *deferred;
   int execute_env_was_null;
+  int executed;
+  int cancel_status;
+  int second_cancel_status;
 } async_work_data;
 
 static void async_work_execute(napi_env env, void *data) {
-  ((async_work_data *)data)->execute_env_was_null = env == NULL;
+  async_work_data *work_data = (async_work_data *)data;
+  work_data->execute_env_was_null = env == NULL;
+  work_data->executed = 1;
 }
 
 static void async_work_complete(napi_env env, napi_status status, void *data) {
-  (void)status;
   async_work_data *work_data = (async_work_data *)data;
-  napi_value result, env_was_null;
+  napi_value result, env_was_null, value;
   napi_create_object(env, &result);
   napi_get_boolean(env, work_data->execute_env_was_null, &env_was_null);
   napi_set_named_property(env, result, "executeEnvWasNull", env_was_null);
+  napi_create_double(env, status, &value);
+  napi_set_named_property(env, result, "status", value);
+  napi_create_double(env, work_data->cancel_status, &value);
+  napi_set_named_property(env, result, "cancelStatus", value);
+  napi_create_double(env, work_data->second_cancel_status, &value);
+  napi_set_named_property(env, result, "secondCancelStatus", value);
+  napi_get_boolean(env, work_data->executed, &value);
+  napi_set_named_property(env, result, "executed", value);
   napi_resolve_deferred(env, work_data->deferred, result);
   napi_delete_async_work(env, work_data->work);
   free(work_data);
 }
 
-static napi_value async_work_promise(napi_env env, napi_callback_info info) {
-  (void)info;
+static napi_value make_async_work_promise(napi_env env, bool cancel) {
+  const int generic_failure = 9;
   async_work_data *data = calloc(1, sizeof(async_work_data));
+  data->cancel_status = generic_failure;
+  data->second_cancel_status = generic_failure;
   napi_value promise;
   napi_create_promise(env, &data->deferred, &promise);
   napi_create_async_work(env, NULL, NULL, async_work_execute, async_work_complete, data,
                          &data->work);
   napi_queue_async_work(env, data->work);
+  if (cancel) {
+    data->cancel_status = napi_cancel_async_work(env, data->work);
+    data->second_cancel_status = napi_cancel_async_work(env, data->work);
+  }
   return promise;
+}
+
+static napi_value async_work_promise(napi_env env, napi_callback_info info) {
+  (void)info;
+  return make_async_work_promise(env, false);
+}
+
+static napi_value async_work_cancel_promise(napi_env env, napi_callback_info info) {
+  (void)info;
+  return make_async_work_promise(env, true);
 }
 
 napi_value napi_register_module_v1(napi_env env, napi_value exports) {
@@ -703,6 +732,8 @@ napi_value napi_register_module_v1(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "resolvedPromise", fn);
   napi_create_function(env, "asyncWork", (size_t)-1, async_work_promise, NULL, &fn);
   napi_set_named_property(env, exports, "asyncWork", fn);
+  napi_create_function(env, "asyncWorkCancel", (size_t)-1, async_work_cancel_promise, NULL, &fn);
+  napi_set_named_property(env, exports, "asyncWorkCancel", fn);
   napi_create_function(env, "startThread", (size_t)-1, start_thread, NULL, &fn);
   napi_set_named_property(env, exports, "startThread", fn);
   napi_create_function(env, "tsfnFinalizeCount", (size_t)-1, tsfn_finalize_count_value, NULL, &fn);

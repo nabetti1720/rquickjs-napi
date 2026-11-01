@@ -59,6 +59,7 @@ const NAPI_BOOLEAN_EXPECTED: napi_status = 7;
 const NAPI_ARRAY_EXPECTED: napi_status = 8;
 const NAPI_GENERIC_FAILURE: napi_status = 9;
 const NAPI_PENDING_EXCEPTION: napi_status = 10;
+const NAPI_CANCELLED: napi_status = 11;
 const NAPI_ESCAPE_CALLED_TWICE: napi_status = 12;
 const NAPI_STATIC: c_int = 1 << 10;
 
