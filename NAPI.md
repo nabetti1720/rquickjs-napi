@@ -50,7 +50,7 @@ Check the implementation and tests for the exact behavior of a particular API.
 | Asynchronous environment cleanup hooks (`napi_add_async_cleanup_hook`, `napi_remove_async_cleanup_hook`) | Unsupported because this crate cannot pause QuickJS context destruction while asynchronous cleanup is pending. A null hook or null remove handle returns `napi_invalid_arg`; otherwise calls return `napi_generic_failure`. |
 | `napi_get_uv_event_loop` | No libuv loop is exposed; the call returns `napi_generic_failure`. |
 | `napi_cancel_async_work` | Cancellation is unsupported and returns `napi_generic_failure`. |
-| Instance-data finalizer in `napi_set_instance_data` | The data pointer can be stored and retrieved, but the finalizer and hint are not invoked. |
+| Instance-data finalizer in `napi_set_instance_data` | The current finalizer is called once during environment teardown with its associated data and hint, after synchronous cleanup hooks. Replacing instance data overwrites the prior finalizer without invoking it. |
 | Thread-safe function queue options | `max_queue_size` and the blocking mode are ignored; the queue is unbounded. Producers can enqueue faster than callbacks are processed, increasing memory use. |
 | Buffer fallback | When a global Node.js `Buffer` is absent, buffers created by this implementation are `Uint8Array` instances tracked internally. Arbitrary typed arrays and DataViews are not Buffers. |
 | Node.js and libuv integration | Node.js modules, the Node event loop, and libuv handles are not provided. |

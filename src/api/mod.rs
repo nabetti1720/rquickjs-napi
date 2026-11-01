@@ -97,6 +97,8 @@ pub struct Env {
     exception: Option<V>,
     last_error: napi_extended_error_info,
     instance_data: *mut c_void,
+    instance_finalize_cb: Option<napi_finalize>,
+    instance_finalize_hint: usize,
     cleanup_hooks: Mutex<Vec<CleanupHook>>,
 }
 
@@ -128,6 +130,16 @@ unsafe extern "C" fn env_finalizer(_rt: *mut qjs::JSRuntime, value: qjs::JSValue
         };
         let callback: napi_cleanup_hook = mem::transmute(hook.callback);
         callback(hook.arg as *mut c_void);
+    }
+    if let Some(callback) = (*env).instance_finalize_cb.take() {
+        let mark = (*env).handles.len();
+        callback(
+            env,
+            (*env).instance_data,
+            (*env).instance_finalize_hint as *mut c_void,
+        );
+        (*env).handles.truncate(mark);
+        (*env).exception.take();
     }
     drop(Box::from_raw(env));
 }
@@ -347,6 +359,8 @@ pub(crate) fn load_addon<'js>(ctx: &Ctx<'js>, path: &str) -> Result<Value<'js>> 
         handles: Vec::new(),
         exception: None,
         instance_data: ptr::null_mut(),
+        instance_finalize_cb: None,
+        instance_finalize_hint: 0,
         cleanup_hooks: Mutex::new(Vec::new()),
         last_error: napi_extended_error_info {
             error_message: ptr::null(),
