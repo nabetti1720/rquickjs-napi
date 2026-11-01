@@ -14,6 +14,7 @@ typedef struct napi_env__ *napi_env;
 typedef struct napi_value__ *napi_value;
 typedef struct napi_callback_info__ *napi_callback_info;
 typedef struct napi_async_cleanup_hook_handle__ *napi_async_cleanup_hook_handle;
+typedef struct napi_callback_scope__ *napi_callback_scope;
 typedef napi_value (*napi_callback)(napi_env, napi_callback_info);
 typedef void (*napi_finalize)(napi_env, void *, void *);
 typedef void (*napi_cleanup_hook)(void *);
@@ -95,6 +96,8 @@ extern napi_status napi_add_env_cleanup_hook(napi_env, napi_cleanup_hook, void *
 extern napi_status napi_remove_env_cleanup_hook(napi_env, napi_cleanup_hook, void *);
 extern napi_status napi_add_async_cleanup_hook(napi_env, napi_async_cleanup_hook, void *, napi_async_cleanup_hook_handle *);
 extern napi_status napi_remove_async_cleanup_hook(napi_async_cleanup_hook_handle);
+extern napi_status napi_open_callback_scope(napi_env, napi_value, void *, napi_callback_scope *);
+extern napi_status napi_close_callback_scope(napi_env, napi_callback_scope);
 extern napi_status napi_create_bigint_int64(napi_env, int64_t, napi_value *);
 extern napi_status napi_create_bigint_uint64(napi_env, uint64_t, napi_value *);
 extern napi_status napi_create_bigint_words(napi_env, int, size_t, const uint64_t *, napi_value *);
@@ -136,6 +139,7 @@ static size_t cleanup_event_count;
 static intptr_t instance_finalize_data[16];
 static intptr_t instance_finalize_hints[16];
 static size_t instance_finalize_count;
+static napi_callback_scope saved_callback_scope;
 
 static void instance_data_finalize(napi_env env, void *data, void *hint) {
   (void)env;
@@ -210,6 +214,45 @@ static napi_value cleanup_hook_events(napi_env env, napi_callback_info info) {
     napi_create_double(env, (double)cleanup_events[i], &value);
     napi_set_element(env, result, (unsigned)i, value);
   }
+  return result;
+}
+
+static napi_value callback_scope_statuses(napi_env env, napi_callback_info info) {
+  (void)info;
+  napi_callback_scope outer = NULL, inner = NULL;
+  napi_status statuses[6];
+  napi_value result, scoped_value;
+  statuses[0] = napi_open_callback_scope(env, NULL, NULL, NULL);
+  statuses[1] = napi_close_callback_scope(env, NULL);
+  statuses[2] = napi_open_callback_scope(env, NULL, NULL, &outer);
+  napi_create_double(env, 1, &scoped_value);
+  statuses[3] = napi_open_callback_scope(env, NULL, NULL, &inner);
+  napi_create_double(env, 2, &scoped_value);
+  statuses[4] = napi_close_callback_scope(env, inner);
+  statuses[5] = napi_close_callback_scope(env, outer);
+  napi_create_array(env, &result);
+  for (unsigned i = 0; i < sizeof(statuses) / sizeof(statuses[0]); i++) {
+    napi_value status;
+    napi_create_double(env, statuses[i], &status);
+    napi_set_element(env, result, i, status);
+  }
+  return result;
+}
+
+static napi_value save_callback_scope(napi_env env, napi_callback_info info) {
+  (void)info;
+  napi_value result;
+  napi_status status = napi_open_callback_scope(env, NULL, NULL, &saved_callback_scope);
+  napi_create_double(env, status, &result);
+  return result;
+}
+
+static napi_value close_saved_callback_scope(napi_env env, napi_callback_info info) {
+  (void)info;
+  napi_value result;
+  napi_status status = napi_close_callback_scope(env, saved_callback_scope);
+  if (status == 0) saved_callback_scope = NULL;
+  napi_create_double(env, status, &result);
   return result;
 }
 
@@ -825,6 +868,13 @@ napi_value napi_register_module_v1(napi_env env, napi_value exports) {
   napi_set_named_property(env, exports, "removeCleanupHook", fn);
   napi_create_function(env, "cleanupHookEvents", (size_t)-1, cleanup_hook_events, NULL, &fn);
   napi_set_named_property(env, exports, "cleanupHookEvents", fn);
+  napi_create_function(env, "callbackScopeStatuses", (size_t)-1, callback_scope_statuses, NULL, &fn);
+  napi_set_named_property(env, exports, "callbackScopeStatuses", fn);
+  napi_create_function(env, "saveCallbackScope", (size_t)-1, save_callback_scope, NULL, &fn);
+  napi_set_named_property(env, exports, "saveCallbackScope", fn);
+  napi_create_function(env, "closeSavedCallbackScope", (size_t)-1,
+                       close_saved_callback_scope, NULL, &fn);
+  napi_set_named_property(env, exports, "closeSavedCallbackScope", fn);
   napi_create_function(env, "setInstanceDataWithFinalizer", (size_t)-1,
                        set_instance_data_with_finalizer, NULL, &fn);
   napi_set_named_property(env, exports, "setInstanceDataWithFinalizer", fn);

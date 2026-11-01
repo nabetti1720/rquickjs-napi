@@ -82,6 +82,51 @@ fn loads_and_runs_napi_addon_in_rquickjs() {
     });
 
     {
+        let runtime = Runtime::new().expect("create runtime for callback-scope validation");
+        runtime.set_loader(AddonResolver, NapiLoader);
+        let first = Context::full(&runtime).expect("create callback-scope owner context");
+        first
+            .with(|ctx| {
+                Module::evaluate(
+                    ctx.clone(),
+                    "callback-scope-owner.mjs",
+                    "import addon from './addon.node'; \
+                     globalThis.callbackScopeAddon = addon; \
+                     if (addon.saveCallbackScope() !== 0) \
+                       throw new Error('opening callback scope failed');",
+                )?
+                .finish::<()>()?;
+                Ok::<(), rquickjs::Error>(())
+            })
+            .expect("save callback scope in owning environment");
+
+        let second = Context::full(&runtime).expect("create callback-scope foreign context");
+        second
+            .with(|ctx| {
+                Module::evaluate(
+                    ctx.clone(),
+                    "callback-scope-foreign.mjs",
+                    "import addon from './addon.node'; \
+                     if (addon.closeSavedCallbackScope() !== 1) \
+                       throw new Error('foreign callback scope was accepted');",
+                )?
+                .finish::<()>()?;
+                Ok::<(), rquickjs::Error>(())
+            })
+            .expect("reject callback scope from another environment");
+
+        first
+            .with(|ctx| {
+                ctx.eval::<(), _>(
+                    "if (callbackScopeAddon.closeSavedCallbackScope() !== 0) \
+                     throw new Error('owning environment could not close callback scope');",
+                )?;
+                Ok::<(), rquickjs::Error>(())
+            })
+            .expect("close callback scope in owning environment");
+    }
+
+    {
         let runtime = Runtime::new().expect("create runtime for instance-data finalizers");
         runtime.set_loader(AddonResolver, NapiLoader);
 

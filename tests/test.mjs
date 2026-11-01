@@ -38,6 +38,10 @@ assert(
   "cleanup hook argument validation, registration, removal, and async-hook limitation",
 );
 assert(addon.cleanupHookEvents().length === 0, "removed cleanup hooks must not run");
+assert(
+  addon.callbackScopeStatuses().join(",") === "1,1,0,0,0,0",
+  "callback scopes validate handles and close nested handle lifetimes",
+);
 
 const completion = {
   threadsafe: false,
