@@ -51,7 +51,7 @@ Check the implementation and tests for the exact behavior of a particular API.
 | `napi_get_uv_event_loop` | No libuv loop is exposed; the call returns `napi_generic_failure`. |
 | `napi_cancel_async_work` | Queued work can be cancelled before its worker starts; its completion callback receives `napi_cancelled` and the execute callback is skipped. Cancellation after work has started, before queueing, or repeated cancellation returns `napi_generic_failure`. |
 | Instance-data finalizer in `napi_set_instance_data` | The current finalizer is called once during environment teardown with its associated data and hint, after synchronous cleanup hooks. Replacing instance data overwrites the prior finalizer without invoking it. |
-| Thread-safe function queue options | `max_queue_size` and the blocking mode are ignored; the queue is unbounded. Producers can enqueue faster than callbacks are processed, increasing memory use. |
+| Thread-safe function queue options | A `max_queue_size` of zero is unbounded; a positive limit is enforced. Nonblocking calls return `napi_queue_full` when full, while blocking calls from worker threads wait for capacity. Blocking calls from the JS execution thread or while an unref'd TSFN is parked return `napi_queue_full` rather than deadlocking. |
 | Buffer fallback | When a global Node.js `Buffer` is absent, buffers created by this implementation are `Uint8Array` instances tracked internally. Arbitrary typed arrays and DataViews are not Buffers. |
 | Node.js and libuv integration | Node.js modules, the Node event loop, and libuv handles are not provided. |
 
