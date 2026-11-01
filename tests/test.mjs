@@ -53,8 +53,16 @@ addon.resolvedPromise().then((value) => {
 
 const asyncWorkResult = await addon.asyncWork();
 assert(asyncWorkResult.executeEnvWasNull, "async execute callback receives a null env");
+assert(asyncWorkResult.executed, "uncancelled async work executes");
+assert(asyncWorkResult.status === 0, "uncancelled async work completes with napi_ok");
 completion.asyncWork = true;
 completeIfReady();
+
+const cancelledWorkResult = await addon.asyncWorkCancel();
+assert(cancelledWorkResult.cancelStatus === 0, "queued async work can be cancelled");
+assert(cancelledWorkResult.secondCancelStatus === 9, "a cancelled work cannot be cancelled twice");
+assert(cancelledWorkResult.status === 11, "cancelled work completes with napi_cancelled");
+assert(!cancelledWorkResult.executed, "cancelled async work does not execute");
 
 const values = [];
 addon.startThread((value) => {
