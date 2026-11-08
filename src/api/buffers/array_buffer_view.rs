@@ -34,6 +34,7 @@ pub(super) unsafe fn is_array_buffer_view(env: napi_env, value: &V) -> Status<bo
     js(env, is_view.call((value.clone(),)))
 }
 
+#[allow(clippy::unnecessary_cast)]
 pub(super) unsafe fn view_info(
     env: napi_env,
     value: napi_value,
@@ -63,18 +64,29 @@ pub(super) unsafe fn view_info(
         return Err(NAPI_GENERIC_FAILURE);
     }
     let buffer = extend(Value::from_raw(ctx(env), raw_buffer));
+    const INT8: u32 = qjs::JSTypedArrayEnum_JS_TYPED_ARRAY_INT8 as u32;
+    const UINT8: u32 = qjs::JSTypedArrayEnum_JS_TYPED_ARRAY_UINT8 as u32;
+    const UINT8C: u32 = qjs::JSTypedArrayEnum_JS_TYPED_ARRAY_UINT8C as u32;
+    const INT16: u32 = qjs::JSTypedArrayEnum_JS_TYPED_ARRAY_INT16 as u32;
+    const UINT16: u32 = qjs::JSTypedArrayEnum_JS_TYPED_ARRAY_UINT16 as u32;
+    const INT32: u32 = qjs::JSTypedArrayEnum_JS_TYPED_ARRAY_INT32 as u32;
+    const UINT32: u32 = qjs::JSTypedArrayEnum_JS_TYPED_ARRAY_UINT32 as u32;
+    const FLOAT32: u32 = qjs::JSTypedArrayEnum_JS_TYPED_ARRAY_FLOAT32 as u32;
+    const FLOAT64: u32 = qjs::JSTypedArrayEnum_JS_TYPED_ARRAY_FLOAT64 as u32;
+    const BIG_INT64: u32 = qjs::JSTypedArrayEnum_JS_TYPED_ARRAY_BIG_INT64 as u32;
+    const BIG_UINT64: u32 = qjs::JSTypedArrayEnum_JS_TYPED_ARRAY_BIG_UINT64 as u32;
     let napi_kind = match kind as u32 {
-        qjs::JSTypedArrayEnum_JS_TYPED_ARRAY_INT8 => 0,
-        qjs::JSTypedArrayEnum_JS_TYPED_ARRAY_UINT8 => 1,
-        qjs::JSTypedArrayEnum_JS_TYPED_ARRAY_UINT8C => 2,
-        qjs::JSTypedArrayEnum_JS_TYPED_ARRAY_INT16 => 3,
-        qjs::JSTypedArrayEnum_JS_TYPED_ARRAY_UINT16 => 4,
-        qjs::JSTypedArrayEnum_JS_TYPED_ARRAY_INT32 => 5,
-        qjs::JSTypedArrayEnum_JS_TYPED_ARRAY_UINT32 => 6,
-        qjs::JSTypedArrayEnum_JS_TYPED_ARRAY_FLOAT32 => 7,
-        qjs::JSTypedArrayEnum_JS_TYPED_ARRAY_FLOAT64 => 8,
-        qjs::JSTypedArrayEnum_JS_TYPED_ARRAY_BIG_INT64 => 9,
-        qjs::JSTypedArrayEnum_JS_TYPED_ARRAY_BIG_UINT64 => 10,
+        INT8 => 0,
+        UINT8 => 1,
+        UINT8C => 2,
+        INT16 => 3,
+        UINT16 => 4,
+        INT32 => 5,
+        UINT32 => 6,
+        FLOAT32 => 7,
+        FLOAT64 => 8,
+        BIG_INT64 => 9,
+        BIG_UINT64 => 10,
         _ => 1,
     };
     Ok((

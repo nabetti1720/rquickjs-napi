@@ -8,12 +8,10 @@ repository = "https://github.com/nabetti1720/rquickjs-napi"
 exclude = ["tests/fixtures/napi/addon.node"]
 
 [dependencies]
+libloading = { version = "0.8", default-features = false }
 rquickjs = { version = "0.14", features = ["futures","loader"], default-features = false }
 tokio = { version = "1", features = ["sync"], default-features = false }
 tracing = { version = "0.1", default-features = false }
-
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "time"], default-features = false }

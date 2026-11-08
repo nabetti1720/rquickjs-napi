@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 use rquickjs::Exception;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use rquickjs::Object;
 use rquickjs::{
     loader::{ImportAttributes, Loader},
@@ -16,7 +16,7 @@ const ADDON_EXT: &str = ".node";
 #[derive(Debug, Default)]
 pub struct NapiLoader;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn is_identifier(key: &str) -> bool {
     let mut chars = key.chars();
     chars
@@ -26,7 +26,7 @@ fn is_identifier(key: &str) -> bool {
         && key != "default"
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn load_module<'js>(ctx: &Ctx<'js>, name: &str) -> Result<Module<'js>> {
     let exports = crate::api::load_addon(ctx, name)?;
 
@@ -46,7 +46,7 @@ fn load_module<'js>(ctx: &Ctx<'js>, name: &str) -> Result<Module<'js>> {
     Ok(module)
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn load_module<'js>(ctx: &Ctx<'js>, _name: &str) -> Result<Module<'js>> {
     Err(Exception::throw_message(
         ctx,

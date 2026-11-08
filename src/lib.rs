@@ -4,7 +4,7 @@
 //! [`NapiLoader`] is an `rquickjs` module loader; add it to the loader tuple before
 //! the generic file loaders. The executable must export its symbols (`-rdynamic`) so
 //! that addons can resolve the `napi_*` functions at load time.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod api;
 mod loader;
 

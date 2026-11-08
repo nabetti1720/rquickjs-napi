@@ -9,12 +9,13 @@ provided by this crate.
 
 ## Platform and loading requirements
 
-- Native `.node` loading is implemented for Unix platforms. The CI and
-  integration tests currently cover Linux and macOS.
+- Native `.node` loading is implemented for Unix and Windows platforms. The CI
+  and integration tests currently cover Linux, macOS and Windows.
+
 - The host must export the `napi_*` symbols so that the native library can
   resolve them. On Linux, this commonly requires linking the executable with
-  `-rdynamic`. Use the equivalent export-dynamic linker option on other
-  platforms.
+  `-rdynamic`. Configure the equivalent symbol-export behavior on other
+  platforms, including Windows.
 - Use `NapiLoader` with the `rquickjs` `loader` feature, and configure a
   resolver to resolve `.node` paths. Register `NapiLoader` before a general
   script loader.
