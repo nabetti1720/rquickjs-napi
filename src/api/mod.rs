@@ -18,12 +18,12 @@ mod state;
 mod values;
 
 use std::{
-    ffi::{c_char, c_int, c_void, CStr, CString},
+    ffi::{c_char, c_int, c_void, CStr},
     mem, ptr, result, slice,
     sync::{atomic::Ordering, Mutex},
 };
 
-use libc::{dlerror, dlopen, dlsym, RTLD_LAZY, RTLD_LOCAL};
+use libloading::Library;
 use rquickjs::{
     function::{Args, Rest, This},
     qjs, Array, Ctx, Error, Exception, Function, JsLifetime, Object, Result, Value,
@@ -64,6 +64,7 @@ type Status<T> = result::Result<T, napi_status>;
 
 const NAPI_AUTO_LENGTH: usize = usize::MAX;
 static ADDON_LOAD_LOCK: Mutex<()> = Mutex::new(());
+static ADDON_LIBRARIES: Mutex<Vec<Library>> = Mutex::new(Vec::new());
 
 #[derive(Default)]
 struct EnvRegistry {
@@ -342,30 +343,22 @@ pub(crate) fn load_addon<'js>(ctx: &Ctx<'js>, path: &str) -> Result<Value<'js>> 
             .unwrap_or_else(|e| e)
     };
 
-    let c_path =
-        CString::new(path).map_err(|_| throw("Invalid path".into(), "ERR_DLOPEN_FAILED"))?;
+    if path.as_bytes().contains(&0) {
+        return Err(throw("Invalid path".into(), "ERR_DLOPEN_FAILED"));
+    }
 
-    let (_handle, init) = {
+    let (handle, init) = {
         let _load_guard = ADDON_LOAD_LOCK
             .lock()
             .map_err(|_| throw("Addon loader lock is poisoned".into(), "ERR_DLOPEN_FAILED"))?;
         PENDING_MODULE.store(ptr::null_mut(), Ordering::Relaxed);
-        let handle = unsafe { dlopen(c_path.as_ptr(), RTLD_LAZY | RTLD_LOCAL) };
-        if handle.is_null() {
-            let err = unsafe {
-                let e = dlerror();
-                if e.is_null() {
-                    "unknown error".to_string()
-                } else {
-                    CStr::from_ptr(e).to_string_lossy().into_owned()
-                }
-            };
-            return Err(throw(err, "ERR_DLOPEN_FAILED"));
-        }
+        let handle = unsafe { Library::new(path) }
+            .map_err(|err| throw(err.to_string(), "ERR_DLOPEN_FAILED"))?;
 
-        let symbol = unsafe { dlsym(handle, c"napi_register_module_v1".as_ptr()) };
-        let init: napi_addon_init = if !symbol.is_null() {
-            unsafe { mem::transmute::<*mut c_void, napi_addon_init>(symbol) }
+        let init = if let Ok(symbol) =
+            unsafe { handle.get::<napi_addon_init>(b"napi_register_module_v1\0") }
+        {
+            *symbol
         } else {
             let module = PENDING_MODULE.load(Ordering::Acquire);
             match unsafe { module.as_ref().and_then(|m| m.nm_register_func) } {
@@ -380,6 +373,10 @@ pub(crate) fn load_addon<'js>(ctx: &Ctx<'js>, path: &str) -> Result<Value<'js>> 
         };
         (handle, init)
     };
+    ADDON_LIBRARIES
+        .lock()
+        .map_err(|_| throw("Addon library lock is poisoned".into(), "ERR_DLOPEN_FAILED"))?
+        .push(handle);
 
     let env = Box::new(Env {
         ctx: ctx.as_raw(),

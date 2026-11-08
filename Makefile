@@ -57,11 +57,17 @@ fix:
 	$(CARGO) fmt --all
 
 # N-API integration test
+ifeq ($(OS),Windows_NT)
+test-napi:
+	python tests/build_napi_fixture.py
+	$(CARGO) test --test napi_loader -- --ignored --nocapture
+else
 $(NAPI_FIXTURE_ADDON): $(NAPI_FIXTURE_DIR)/addon.c
 	$(CC) -O2 -shared -fPIC $(NAPI_FIXTURE_LDFLAGS) -pthread -o $@ $<
 
 test-napi: $(NAPI_FIXTURE_ADDON)
 	$(CARGO) test --test napi_loader -- --ignored --nocapture
+endif
 
 # Aggregate and cleanup
 ci: lint build test test-napi

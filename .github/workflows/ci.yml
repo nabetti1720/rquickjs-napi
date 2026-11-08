@@ -10,15 +10,9 @@ permissions:
   contents: read
 
 jobs:
-  ci:
-    name: CI (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
+  lint-and-format:
+    name: Lint and format check
+    runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -30,6 +24,38 @@ jobs:
         uses: Swatinem/rust-cache@v2
       - name: Lint and format check
         run: make lint
+
+  platform-tests:
+    name: Platform tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: lint-and-format
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Set up Python
+        if: runner.os == 'Windows'
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+      - name: Set up MinGW tools
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          path-type: inherit
+          update: true
+          install: mingw-w64-x86_64-gcc
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
       - name: Build all targets
         run: make build
       - name: Run unit tests

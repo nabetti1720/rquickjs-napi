@@ -9,13 +9,13 @@ Node-API addons in an `rquickjs` runtime; it does not run Node.js.
 
 ## Status and platform support
 
-- Native addon loading is currently supported on Unix platforms.
+- Native addon loading is supported on Unix and Windows platforms.
 - Addons must be built for the host platform and architecture and use Node-API
   functions supported by this crate.
 - The host executable must export the N-API symbols so that the addon can
   resolve them at load time. On Linux, this commonly requires linking the
   executable with `-rdynamic`; the equivalent linker option may differ on
-  other platforms.
+  other platforms, including Windows.
 - Compatibility depends on the APIs used by each addon; compatibility with
   every Node.js native addon is not guaranteed.
 - Synchronous environment cleanup hooks run in reverse registration order
@@ -86,11 +86,12 @@ list them. `make lint` checks formatting and runs Clippy; `make build` builds
 all targets; and `make test` runs Rust unit tests. `make ci` runs these checks
 and the N-API integration test. Run `make test-napi` to run just that
 integration test; it builds the C addon fixture under `tests/fixtures/napi` and
-requires a C compiler. `make check` checks all targets without producing
-artifacts, while `make fix` applies Cargo and Clippy suggestions and formats
-Rust sources. JavaScript test scripts are kept in `tests/`. To cross-compile,
-pass an installed Rust target, for example
-`make build TARGET=aarch64-unknown-linux-gnu`.
+requires a C compiler. On Windows, it also requires Python and MinGW `gcc` /
+`dlltool` to link the fixture against the test host's exported N-API symbols.
+`make check` checks all targets without producing artifacts, while `make fix`
+applies Cargo and Clippy suggestions and formats Rust sources. JavaScript test
+scripts are kept in `tests/`. To cross-compile, pass an installed Rust target,
+for example `make build TARGET=aarch64-unknown-linux-gnu`.
 
 ## License
 
