@@ -3,6 +3,7 @@ name = "rquickjs-napi"
 description = "Node-API (N-API) support and native addon loading for rquickjs"
 version = "0.0.6"
 edition = "2021"
+rust-version = "1.95"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/nabetti1720/rquickjs-napi"
 exclude = ["tests/fixtures/napi/addon.node"]
