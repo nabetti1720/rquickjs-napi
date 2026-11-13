@@ -1,5 +1,11 @@
 # rquickjs-napi
 
+[![crate][crate-image]][crate-link]
+[![Docs][docs-image]][docs-link]
+[![Build Status][build-image]][build-link]
+![Apache2/MIT licensed][license-image]
+![Rust Version][rustc-image]
+
 Node-API (N-API) support for loading native `.node` addons in
 [rquickjs](https://github.com/DelSkayn/rquickjs).
 
@@ -101,3 +107,14 @@ Licensed under either of
 - [Apache License, Version 2.0](LICENSE-APACHE),
 
 at your option.
+
+[//]: # (badges)
+
+[crate-image]: https://img.shields.io/crates/v/rquickjs-napi
+[crate-link]: https://crates.io/crates/rquickjs-napi
+[docs-image]: https://docs.rs/rquickjs-napi/badge.svg
+[docs-link]: https://docs.rs/rquickjs-napi/
+[build-image]: https://github.com/nabetti1720/rquickjs-napi/actions/workflows/ci.yml/badge.svg
+[build-link]: https://github.com/nabetti1720/rquickjs-napi/actions/workflows/ci.yml
+[license-image]: https://img.shields.io/badge/license-Apache2.0/MIT-blue.svg
+[rustc-image]: https://img.shields.io/badge/rustc-1.95+-blue.svg
