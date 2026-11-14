@@ -43,7 +43,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Set up Python
         if: runner.os == 'Windows'
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: '3.x'
       - name: Set up MinGW tools
